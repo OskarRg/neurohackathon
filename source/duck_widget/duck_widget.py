@@ -6,7 +6,7 @@ import time
 import random
 from PyQt6.QtWidgets import (QApplication, QLabel, QWidget, QVBoxLayout, QFrame,
                              QGraphicsDropShadowEffect, QTextEdit, QPushButton,
-                             QHBoxLayout)
+                             QHBoxLayout, QProgressBar)
 from PyQt6.QtCore import (Qt, QTimer, QSize, QPropertyAnimation, 
                           QEasingCurve, pyqtProperty, QRectF, pyqtSignal, QObject)
 from PyQt6.QtGui import (QMovie, QColor, QCursor, QAction, QPainter, 
@@ -23,7 +23,7 @@ DUCK_STATES = {
 
 # --- WYMIARY ---
 WIDTH = 280                 
-DUCK_AREA_HEIGHT = 280      
+DUCK_AREA_HEIGHT = 300 # Zwiększono lekko, żeby zmieścić pasek
 CHAT_AREA_HEIGHT = 300      
 BORDER_RADIUS = 40          
 MARGIN = 30                 
@@ -75,7 +75,6 @@ class DuckSignals(QObject):
 class UnifiedFrame(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # KLUCZOWE DLA ZAOKRĄGLONEGO CIENIA:
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) 
         self.setStyleSheet("background: transparent;")
         
@@ -90,34 +89,76 @@ class UnifiedFrame(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Rysujemy idealnie w granicach widgetu
         rect = QRectF(self.rect()).adjusted(3, 3, -3, -3)
         path = QPainterPath()
         path.addRoundedRect(rect, BORDER_RADIUS, BORDER_RADIUS)
 
-        # Tło (Białe)
+        # Tło
         painter.setBrush(QBrush(self._bg_color))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPath(path)
 
-        # Ramka (Kolorowa)
+        # Ramka
         pen = QPen(self._border_color)
         pen.setWidth(6)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
 
-# --- GÓRA: KACZKA ---
+# --- GÓRA: KACZKA + PASEK STRESU ---
 class DuckArea(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(DUCK_AREA_HEIGHT)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(MARGIN, MARGIN, MARGIN, MARGIN)
+        layout.setContentsMargins(MARGIN, MARGIN, MARGIN, 15) # Mniejszy margines na dole dla paska
+        
+        # 1. KACZKA
         self.label = QLabel()
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(self.label)
+        
+        # 2. PASEK STRESU (Bar)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(6) # Cienki, elegancki pasek
+        self.progress_bar.setTextVisible(False) # Bez tekstu procentowego
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        
+        # Styl bazowy paska
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: none;
+                background-color: #F0F0F0;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background-color: #00d2ff;
+                border-radius: 3px;
+            }
+        """)
+        
+        layout.addSpacing(10) # Odstęp między kaczką a paskiem
+        layout.addWidget(self.progress_bar)
+
+    def update_bar_color(self, color_hex):
+        """Aktualizuje kolor paska w zależności od stanu"""
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                background-color: #F0F0F0;
+                border-radius: 3px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {color_hex};
+                border-radius: 3px;
+            }}
+        """)
+
+    def update_bar_value(self, value_float):
+        """Aktualizuje długość paska (0.0 - 1.0 -> 0 - 100)"""
+        self.progress_bar.setValue(int(value_float * 100))
 
 # --- DÓŁ: CZAT ---
 class ChatArea(QWidget):
@@ -237,7 +278,7 @@ class StoicDuckWidget(QWidget):
         self.is_expanded = False
         self.has_triggered_intro = False
         self.dragPos = None
-        self.is_speaking = False # Flaga audio
+        self.is_speaking = False 
         
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -258,7 +299,7 @@ class StoicDuckWidget(QWidget):
         self.shell_layout.setContentsMargins(0, 0, 0, 0)
         self.shell_layout.setSpacing(0)
 
-        # Kaczka
+        # Kaczka (z Paskiem)
         self.duck_area = DuckArea()
         self.shell_layout.addWidget(self.duck_area)
         
@@ -271,10 +312,9 @@ class StoicDuckWidget(QWidget):
 
         # Cień
         self.glow = QGraphicsDropShadowEffect()
-        self.glow.setBlurRadius(40) # Zmniejszamy blur, żeby kształt był wyraźniejszy
+        self.glow.setBlurRadius(40)
         self.glow.setOffset(0, 0)
         self.glow.setColor(QColor("#00d2ff"))
-        # WAŻNE: Cień nakładamy na Shell (który ma kształt), a nie na kwadratowe okno
         self.shell.setGraphicsEffect(self.glow)
 
         self.movie = None
@@ -298,14 +338,10 @@ class StoicDuckWidget(QWidget):
     def _pulse_glow_for_audio(self, duration):
         self.is_speaking = True
         self.glow.setColor(QColor("#FFD700"))
-        
-        # Bezpieczne przywracanie koloru
         QTimer.singleShot(int(duration * 1000), self._reset_glow_after_audio)
 
     def _reset_glow_after_audio(self):
         self.is_speaking = False
-        # FIX KOLORÓW: Pobieramy kolor AKTUALNEGO stanu ze słownika
-        # Dzięki temu, jeśli stan zmienił się w trakcie mówienia, nie przywrócimy starego koloru
         current_data = DUCK_STATES.get(self.current_state_name, DUCK_STATES["zen"])
         self.glow.setColor(QColor(current_data["color"]))
 
@@ -347,6 +383,9 @@ class StoicDuckWidget(QWidget):
     def update_stress(self, stress):
         self.stress_level = stress
         
+        # Aktualizuj wartość paska stresu w DuckArea
+        self.duck_area.update_bar_value(stress)
+        
         if stress < 0.2: 
             self.change_state("zen")
             self.toggle_expand(False)
@@ -375,8 +414,9 @@ class StoicDuckWidget(QWidget):
         
         self.shell.setBorderColor(new_color)
         
-        # Jeśli kaczka NIE MÓWI, aktualizuj cień natychmiast.
-        # Jeśli MÓWI (jest złota), nie przeszkadzaj jej - funkcja _reset_glow naprawi to po zakończeniu.
+        # Aktualizuj kolor paska stresu
+        self.duck_area.update_bar_color(new_color)
+        
         if not self.is_speaking:
             self.glow.setColor(QColor(new_color))
         
@@ -389,8 +429,13 @@ class StoicDuckWidget(QWidget):
         
         if self.movie: self.movie.stop()
         self.movie = QMovie(path)
-        s = WIDTH - (MARGIN * 2)
-        self.movie.setScaledSize(QSize(s, s))
+        
+        # Skalowanie GIFa (z uwzględnieniem paska na dole)
+        # Odejmujemy więcej z wysokości, żeby zrobić miejsce na bar
+        s_w = WIDTH - (MARGIN * 2)
+        s_h = WIDTH - (MARGIN * 2) 
+        self.movie.setScaledSize(QSize(s_w, s_h))
+        
         self.duck_area.label.setMovie(self.movie)
         self.movie.start()
 
