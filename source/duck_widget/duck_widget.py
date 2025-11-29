@@ -11,8 +11,7 @@ from typing import Tuple
 # PyQt Imports
 from PyQt6.QtWidgets import (
     QApplication, QLabel, QWidget, QVBoxLayout, QFrame,
-    QGraphicsDropShadowEffect, QTextEdit, QPushButton,
-    QHBoxLayout, QProgressBar
+    QTextEdit, QPushButton, QHBoxLayout, QProgressBar
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, 
@@ -123,6 +122,7 @@ class StyleSheetManager:
 
     @staticmethod
     def get_input_style() -> str:
+        # FIX: Dodano ukrywanie scrollbarów
         return f"""
             QTextEdit {{
                 background-color: {AppConfig.INPUT_BG};
@@ -132,10 +132,18 @@ class StyleSheetManager:
                 padding: 8px 12px;
                 font-family: 'Segoe UI';
                 font-size: 12px;
+                qproperty-alignment: AlignVCenter; /* Wyśrodkowanie w pionie */
             }}
             QTextEdit:focus {{
                 border: 1px solid #74B9FF;
                 background-color: #FFFFFF;
+            }}
+            /* Ukrywamy oba suwaki */
+            QScrollBar:vertical, QScrollBar:horizontal {{
+                height: 0px;
+                width: 0px;
+                border: none;
+                background: transparent;
             }}
         """
 
@@ -370,18 +378,13 @@ class ChatArea(QWidget):
         self._append_message("MENTOR", text, is_user=False)
 
     def _append_message(self, sender: str, text: str, is_user: bool):
-        """
-        Dodaje wiadomość do czatu w układzie listy (wszystkie po lewej).
-        """
-        
         if is_user:
-            label_color = "#999999"  # Szary dla "TY"
+            label_color = "#999999"
             label_text = "TY"
         else:
-            label_color = AppConfig.COLOR_STOIC  # Złoty dla "MENTOR"
+            label_color = AppConfig.COLOR_STOIC
             label_text = "MENTOR"
 
-        # Style CSS dla wiadomości (bez tła, oddzielone linią)
         html = f"""
         <div style="
             display: flex; 
@@ -463,12 +466,8 @@ class StoicDuckPro(QWidget):
         self.chat_area.message_sent.connect(self._handle_user_message)
         self.inner_layout.addWidget(self.chat_area)
 
-        # Cień
-        self.glow = QGraphicsDropShadowEffect()
-        self.glow.setBlurRadius(50)
-        self.glow.setOffset(0, 8)
-        self.glow.setColor(QColor(0, 0, 0, 30))
-        self.shell.setGraphicsEffect(self.glow)
+        # Cień usunięty (aby uniknąć błędów graficznych)
+        # self.glow = QGraphicsDropShadowEffect() ...
 
     def update_stress(self, stress: float):
         self.stress_level = max(0.0, min(1.0, stress))
@@ -517,12 +516,13 @@ class StoicDuckPro(QWidget):
 
     def _voice_effect(self, duration):
         self.is_speaking = True
-        self.glow.setColor(QColor(AppConfig.GRADIENT_STOIC[0])) 
+        self.shell.set_border_gradient(AppConfig.GRADIENT_STOIC)
         QTimer.singleShot(int(duration * 1000), self._end_voice_effect)
 
     def _end_voice_effect(self):
         self.is_speaking = False
-        self.glow.setColor(QColor(0, 0, 0, 30))
+        config = DUCK_STATES_CONFIG[self.current_state_enum]
+        self.shell.set_border_gradient(config["grad"])
 
     def _toggle_expand(self, expand: bool):
         if self.is_expanded == expand: return
