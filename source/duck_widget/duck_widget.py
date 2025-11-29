@@ -12,7 +12,7 @@ from typing import Tuple
 from PyQt6.QtWidgets import (
     QApplication, QLabel, QWidget, QVBoxLayout, QFrame,
     QGraphicsDropShadowEffect, QTextEdit, QPushButton,
-    QHBoxLayout, QProgressBar
+    QHBoxLayout, QProgressBar, QMenu
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, 
@@ -20,7 +20,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QMovie, QColor, QCursor, QPainter, 
-    QPainterPath, QPen, QBrush, QFont, QLinearGradient
+    QPainterPath, QPen, QBrush, QFont, QLinearGradient, QAction
 )
 
 # --- 0. LOGGING SETUP ---
