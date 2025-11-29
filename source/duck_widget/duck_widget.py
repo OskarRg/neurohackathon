@@ -3,45 +3,84 @@ import os
 import keyboard
 import threading
 import time
-from collections import deque
-from datetime import datetime
+import random
 from PyQt6.QtWidgets import (QApplication, QLabel, QWidget, QVBoxLayout, QFrame,
-                             QGraphicsDropShadowEffect, QMenu, QTextEdit, QPushButton,
+                             QGraphicsDropShadowEffect, QTextEdit, QPushButton,
                              QHBoxLayout)
-from PyQt6.QtCore import (Qt, QPoint, QTimer, QSize, QPropertyAnimation, 
-                          QEasingCurve, pyqtProperty, QRectF, pyqtSignal, QObject, QRect)
+from PyQt6.QtCore import (Qt, QTimer, QSize, QPropertyAnimation, 
+                          QEasingCurve, pyqtProperty, QRectF, pyqtSignal, QObject)
 from PyQt6.QtGui import (QMovie, QColor, QCursor, QAction, QPainter, 
-                         QPainterPath, QPen, QBrush, QFont)
+                         QPainterPath, QPen, QBrush)
 
 # --- KONFIGURACJA ---
 ASSETS_DIR = "assets"
 DUCK_STATES = {
-    "zen":   {"path": os.path.join(ASSETS_DIR, "duck_zen.gif"),   "color": "#00d2ff", "label": "Zen (< 20%)"},
-    "focus": {"path": os.path.join(ASSETS_DIR, "duck_focus.gif"), "color": "#8899a6", "label": "Focus (20-50%)"},
-    "worry": {"path": os.path.join(ASSETS_DIR, "duck_worry.gif"), "color": "#ff9900", "label": "Worry (50-80%)"},
-    "stoic": {"path": os.path.join(ASSETS_DIR, "duck_stoic.gif"), "color": "#ffd700", "label": "Stoic (> 80%)"}
+    "zen":   {"path": os.path.join(ASSETS_DIR, "duck_zen.gif"),   "color": "#00d2ff"},
+    "focus": {"path": os.path.join(ASSETS_DIR, "duck_focus.gif"), "color": "#8899a6"},
+    "worry": {"path": os.path.join(ASSETS_DIR, "duck_worry.gif"), "color": "#ff9900"},
+    "stoic": {"path": os.path.join(ASSETS_DIR, "duck_stoic.gif"), "color": "#ffd700"}
 }
 
-# --- WYMIARY DLA IDEALNEGO DOPASOWANIA ---
-VISUAL_WIDTH = 260          # Szerokość wizualna ramki i czatu
-BORDER_RADIUS = 50          # Zaokrąglenie rogów
-INTERNAL_MARGIN = 35        # Margines dla GIFa wewnątrz ramki
+# --- WYMIARY ---
+WIDTH = 280                 
+DUCK_AREA_HEIGHT = 280      
+CHAT_AREA_HEIGHT = 300      
+BORDER_RADIUS = 40          
+MARGIN = 30                 
 
-# --- SIGNALS ---
+# ==========================================
+# MOCK BACKEND
+# ==========================================
+class MockPhilosopherBrain:
+    @staticmethod
+    def get_response(user_text, stress_level):
+        time.sleep(random.uniform(0.5, 1.5)) 
+        
+        if "SYSTEM_TRIGGER" in user_text:
+            return "Widzę, że poziom stresu jest krytyczny. Jestem tutaj. Opowiedz mi o tym.", 2.0
+
+        if stress_level > 0.8:
+            responses = [
+                "Widzę chaos w Twoim kodzie. Zatrzymaj się.",
+                "Gniew to kwas, który niszczy naczynie.",
+                "Nie kontrolujesz wyniku, ale swoje podejście."
+            ]
+        elif stress_level > 0.4:
+            responses = [
+                "Skupienie jest kluczem.",
+                "Nie martw się przyszłymi błędami.",
+                "Pisz dalej, ale z rozwagą."
+            ]
+        else:
+            responses = [
+                "Płyniesz z prądem kodu.",
+                "Umysł czysty jak pusty plik.",
+                "Spokój jest Twoją siłą."
+            ]
+            
+        text = random.choice(responses)
+        audio_duration = len(text.split()) * 0.4 
+        return text, audio_duration
+
+# ==========================================
+# FRONTEND (UI)
+# ==========================================
+
 class DuckSignals(QObject):
     stress_changed = pyqtSignal(float)
-    intervention_triggered = pyqtSignal(str)
     user_message_sent = pyqtSignal(str)
-    ai_response_ready = pyqtSignal(str)
+    ai_response_ready = pyqtSignal(str, float)
 
-# --- RAMKA KACZKI (GÓRA) ---
-class PremiumFrame(QFrame):
+# --- UNIFIED FRAME (TŁO) ---
+class UnifiedFrame(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # KLUCZOWE DLA ZAOKRĄGLONEGO CIENIA:
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) 
         self.setStyleSheet("background: transparent;")
+        
         self._border_color = QColor("#00d2ff")
-        # Ustawiamy stały rozmiar, żeby pasował do czatu
-        self.setFixedSize(VISUAL_WIDTH, VISUAL_WIDTH)
+        self._bg_color = QColor("#FFFFFF") 
 
     def setBorderColor(self, color_hex):
         self._border_color = QColor(color_hex)
@@ -51,273 +90,298 @@ class PremiumFrame(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Rysujemy ramkę
+        # Rysujemy idealnie w granicach widgetu
         rect = QRectF(self.rect()).adjusted(3, 3, -3, -3)
         path = QPainterPath()
         path.addRoundedRect(rect, BORDER_RADIUS, BORDER_RADIUS)
 
-        # Białe tło
-        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        # Tło (Białe)
+        painter.setBrush(QBrush(self._bg_color))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPath(path)
 
-        # Kolorowa obwódka
+        # Ramka (Kolorowa)
         pen = QPen(self._border_color)
         pen.setWidth(6)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
 
-# --- PANEL CZATU (DÓŁ) ---
-class ChatPanel(QFrame):
-    message_sent = pyqtSignal(str)
-    
+# --- GÓRA: KACZKA ---
+class DuckArea(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Szerokość identyczna jak ramka kaczki
-        self.setFixedWidth(VISUAL_WIDTH)
-        
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: rgba(30, 30, 30, 240);
-                border-bottom-left-radius: {BORDER_RADIUS}px;
-                border-bottom-right-radius: {BORDER_RADIUS}px;
-                border-top-left-radius: 5px;
-                border-top-right-radius: 5px;
-                border: 2px solid #ffd700; /* Złota ramka Stoika */
-            }}
-            QTextEdit {{
-                background-color: #222;
-                color: #eee;
-                border: none;
-                border-radius: 10px;
-                padding: 8px;
-                font-family: Segoe UI;
-            }}
-            QPushButton {{
-                background-color: #ffd700; /* Złoty przycisk */
-                color: #000;
-                border-radius: 15px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{ background-color: #ffea00; }}
-        """)
+        self.setFixedHeight(DUCK_AREA_HEIGHT)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(MARGIN, MARGIN, MARGIN, MARGIN)
+        self.label = QLabel()
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet("background: transparent; border: none;")
+        layout.addWidget(self.label)
+
+# --- DÓŁ: CZAT ---
+class ChatArea(QWidget):
+    message_sent = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(CHAT_AREA_HEIGHT)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 25) # Większy margines na dole na zaokrąglenie
+        layout.setContentsMargins(20, 5, 20, 20)
         
-        # Nagłówek
+        self.line = QFrame()
+        self.line.setFrameShape(QFrame.Shape.HLine)
+        self.line.setStyleSheet("background-color: #EEEEEE; border: none; max-height: 1px;")
+        layout.addWidget(self.line)
+
         self.header = QLabel("🏛️ MENTOR STOICKI")
-        self.header.setStyleSheet("color: #ffd700; font-weight: bold; border: none; background: transparent;")
+        self.header.setStyleSheet("color: #D4AF37; font-weight: bold; font-family: Segoe UI; margin-top: 10px; font-size: 12px;")
         self.header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.header)
         
-        # Historia
-        self.chat_history = QTextEdit()
-        self.chat_history.setReadOnly(True)
-        self.chat_history.setStyleSheet("background: transparent; font-size: 11px;")
-        layout.addWidget(self.chat_history)
+        self.history = QTextEdit()
+        self.history.setReadOnly(True)
+        self.history.setStyleSheet("""
+            QTextEdit {
+                background: transparent;
+                color: #333333;
+                font-family: Segoe UI;
+                font-size: 12px;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #F5F5F5;
+                width: 8px;
+                margin: 0px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #FFD700;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #FFC107;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: none; border: none; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        """)
+        layout.addWidget(self.history)
         
-        # Input
-        input_layout = QHBoxLayout()
-        self.input_field = QTextEdit()
-        self.input_field.setPlaceholderText("Wpisz myśl...")
-        self.input_field.setFixedHeight(35)
-        self.input_field.keyPressEvent = self._on_key_press
+        input_box = QHBoxLayout()
+        self.input = QTextEdit()
+        self.input.setPlaceholderText("Napisz... (Ctrl+Enter)")
+        self.input.setFixedHeight(40)
+        self.input.setStyleSheet("""
+            QTextEdit {
+                background-color: #F5F5F5;
+                border-radius: 10px;
+                color: #000000;
+                padding: 5px;
+                border: 1px solid #E0E0E0;
+            }
+        """)
+        self.input.keyPressEvent = self._on_key
         
-        send_btn = QPushButton("➤")
-        send_btn.setFixedSize(35, 35)
-        send_btn.clicked.connect(self._send_message)
+        btn = QPushButton("➤") 
+        btn.setFixedSize(40, 40)
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FFD700;
+                color: black;
+                border-radius: 20px;
+                font-weight: bold;
+                border: none;
+                font-size: 16px;
+                padding-bottom: 2px;
+            }
+            QPushButton:hover { background-color: #FFEA00; }
+            QPushButton:pressed { background-color: #D4AF37; }
+        """)
+        btn.clicked.connect(self._send)
         
-        input_layout.addWidget(self.input_field)
-        input_layout.addWidget(send_btn)
-        
-        layout.addLayout(input_layout)
-        
-    def _on_key_press(self, event):
+        input_box.addWidget(self.input)
+        input_box.addWidget(btn)
+        layout.addLayout(input_box)
+
+    def _on_key(self, event):
         if event.key() == Qt.Key.Key_Return and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            self._send_message()
+            self._send()
+            event.accept()
         else:
-            QTextEdit.keyPressEvent(self.input_field, event)
-            
-    def _send_message(self):
-        text = self.input_field.toPlainText().strip()
+            QTextEdit.keyPressEvent(self.input, event)
+
+    def _send(self):
+        text = self.input.toPlainText().strip()
         if not text: return
-        self.chat_history.append(f"<b style='color:#ccc'>Ty:</b> {text}")
-        self.input_field.clear()
+        self.history.append(f"<div style='margin-bottom: 5px;'><b style='color:#555'>Ty:</b> {text}</div>")
+        self.input.clear()
         self.message_sent.emit(text)
-        
-    def add_ai_response(self, text):
-        self.chat_history.append(f"<br><b style='color:#ffd700'>Mentor:</b> <i>{text}</i>")
-        sb = self.chat_history.verticalScrollBar()
+
+    def add_response(self, text):
+        self.history.append(f"<div style='margin-bottom: 10px;'><b style='color:#D4AF37'>Mentor:</b> <i>{text}</i></div>")
+        sb = self.history.verticalScrollBar()
         sb.setValue(sb.maximum())
 
 # --- GŁÓWNY WIDGET ---
-class ModernDuckWidget(QWidget):
+class StoicDuckWidget(QWidget):
     signals = DuckSignals()
-    
-    def __init__(self, debug_mode=False):
+
+    def __init__(self):
         super().__init__()
-        self.debug_mode = debug_mode
         
-        # Setup Stanu
         self.stress_level = 0.0
         self.current_state_name = ""
-        self.is_chat_visible = False
+        self.is_expanded = False
+        self.has_triggered_intro = False
+        self.dragPos = None
+        self.is_speaking = False # Flaga audio
         
-        # Setup Okna
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
-        # Pozycja Startowa
-        screen = QApplication.primaryScreen().geometry()
-        # Wysokość startowa = tylko kaczka
-        self.setGeometry(screen.width() - 350, screen.height() - 400, VISUAL_WIDTH + 20, VISUAL_WIDTH + 20)
-        
-        # --- LAYOUT GŁÓWNY ---
-        # Używamy QVBoxLayout z zerowymi marginesami między elementami, żeby się stykały
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(0) 
-        self.main_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        screen_geo = QApplication.primaryScreen().availableGeometry()
+        initial_x = screen_geo.width() - WIDTH - 50
+        initial_y = 50
+        self.setGeometry(initial_x, initial_y, WIDTH + 20, DUCK_AREA_HEIGHT + 20)
 
-        # 1. KONTENER KACZKI
-        self.duck_container = PremiumFrame(self)
+        # 1. Shell
+        self.shell = UnifiedFrame(self)
+        self.window_layout = QVBoxLayout(self)
+        self.window_layout.setContentsMargins(10, 10, 10, 10)
+        self.window_layout.addWidget(self.shell)
+
+        # 2. Wnętrze
+        self.shell_layout = QVBoxLayout(self.shell)
+        self.shell_layout.setContentsMargins(0, 0, 0, 0)
+        self.shell_layout.setSpacing(0)
+
+        # Kaczka
+        self.duck_area = DuckArea()
+        self.shell_layout.addWidget(self.duck_area)
         
-        # Wnętrze kaczki
-        self.duck_inner_layout = QVBoxLayout(self.duck_container)
-        self.duck_inner_layout.setContentsMargins(INTERNAL_MARGIN, INTERNAL_MARGIN, INTERNAL_MARGIN, INTERNAL_MARGIN)
-        
-        self.label = QLabel(self.duck_container)
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label.setStyleSheet("background: transparent; border: none;")
-        self.duck_inner_layout.addWidget(self.label)
-        
-        # Cień pod kaczką
+        # Czat
+        self.chat_area = ChatArea()
+        self.chat_area.setFixedHeight(0)
+        self.chat_area.hide()
+        self.chat_area.message_sent.connect(self.handle_user_message)
+        self.shell_layout.addWidget(self.chat_area)
+
+        # Cień
         self.glow = QGraphicsDropShadowEffect()
-        self.glow.setBlurRadius(50)
+        self.glow.setBlurRadius(40) # Zmniejszamy blur, żeby kształt był wyraźniejszy
         self.glow.setOffset(0, 0)
         self.glow.setColor(QColor("#00d2ff"))
-        self.duck_container.setGraphicsEffect(self.glow)
-        
-        self.main_layout.addWidget(self.duck_container)
+        # WAŻNE: Cień nakładamy na Shell (który ma kształt), a nie na kwadratowe okno
+        self.shell.setGraphicsEffect(self.glow)
 
-        # 2. PANEL CZATU (Domyślnie UKRYTY i o wysokości 0)
-        self.chat_panel = ChatPanel(self)
-        self.chat_panel.setFixedHeight(0) # Startujemy zamknięci
-        self.chat_panel.hide()
-        self.chat_panel.message_sent.connect(self._on_user_message)
-        
-        self.main_layout.addWidget(self.chat_panel)
-
-        # Inicjalizacja
         self.movie = None
         self._opacity = 1.0
-        self.oldPos = self.pos()
-        self.ai_callback = None
         
-        self.change_state_smooth("zen")
+        self.signals.ai_response_ready.connect(self.display_ai_response)
+        
+        self.change_state("zen")
 
-    # --- LOGIKA STRESU (AUTO-TRIGGER) ---
-    def update_stress(self, stress_level):
-        self.stress_level = max(0.0, min(1.0, stress_level))
+    def handle_user_message(self, text):
+        threading.Thread(target=self._run_mock_backend, args=(text,), daemon=True).start()
+
+    def _run_mock_backend(self, user_text):
+        response_text, audio_duration = MockPhilosopherBrain.get_response(user_text, self.stress_level)
+        self.signals.ai_response_ready.emit(response_text, audio_duration)
+
+    def display_ai_response(self, text, duration):
+        self.chat_area.add_response(text)
+        self._pulse_glow_for_audio(duration)
+
+    def _pulse_glow_for_audio(self, duration):
+        self.is_speaking = True
+        self.glow.setColor(QColor("#FFD700"))
         
-        # Logika zmiany stanów
-        if self.stress_level < 0.2: 
-            self.change_state_smooth("zen")
-            self._ensure_chat_closed() # Zen = zamknij czat
-        elif self.stress_level < 0.5: 
-            self.change_state_smooth("focus")
-            self._ensure_chat_closed() # Focus = zamknij czat
-        elif self.stress_level < 0.8: 
-            self.change_state_smooth("worry")
-            self._ensure_chat_closed() # Worry = zamknij czat
+        # Bezpieczne przywracanie koloru
+        QTimer.singleShot(int(duration * 1000), self._reset_glow_after_audio)
+
+    def _reset_glow_after_audio(self):
+        self.is_speaking = False
+        # FIX KOLORÓW: Pobieramy kolor AKTUALNEGO stanu ze słownika
+        # Dzięki temu, jeśli stan zmienił się w trakcie mówienia, nie przywrócimy starego koloru
+        current_data = DUCK_STATES.get(self.current_state_name, DUCK_STATES["zen"])
+        self.glow.setColor(QColor(current_data["color"]))
+
+    # --- EXPAND LOGIC ---
+    def toggle_expand(self, expand=True):
+        if self.is_expanded == expand: return
+        self.is_expanded = expand
+
+        if expand:
+            self.chat_area.show()
+            target_h = DUCK_AREA_HEIGHT + CHAT_AREA_HEIGHT + 20 
+            chat_target_h = CHAT_AREA_HEIGHT
         else:
-            self.change_state_smooth("stoic")
-            # STOIC = AUTO OPEN CHAT
-            if not self.is_chat_visible:
-                self._toggle_chat(open=True)
-                # Opcjonalnie: Wiadomość powitalna tylko raz na sesję
-                self.chat_panel.add_ai_response("Widzę, że sytuacja jest krytyczna. Jestem tu.")
+            target_h = DUCK_AREA_HEIGHT + 20
+            chat_target_h = 0
 
-    # --- MECHANIKA OTWIERANIA/ZAMYKANIA ---
-    def _ensure_chat_closed(self):
-        if self.is_chat_visible:
-            self._toggle_chat(open=False)
-
-    def _toggle_chat(self, open=True):
-        """Animacja wysuwania/chowania czatu"""
-        self.is_chat_visible = open
+        self.anim_chat = QPropertyAnimation(self.chat_area, b"maximumHeight")
+        self.anim_timer = QTimer()
+        self.anim_frames = 25
+        self.current_chat_h = 0 if expand else CHAT_AREA_HEIGHT
+        self.step = chat_target_h / self.anim_frames if expand else -CHAT_AREA_HEIGHT / self.anim_frames
         
-        start_geo = self.geometry()
-        duck_h = VISUAL_WIDTH + 20 # Marginesy cienia
-        chat_h = 300 # Wysokość docelowa czatu
-        
-        if open:
-            self.chat_panel.show()
-            start_h = 0
-            end_h = chat_h
-            total_h = duck_h + chat_h
-        else:
-            start_h = chat_h
-            end_h = 0
-            total_h = duck_h # Wracamy do rozmiaru samej kaczki
-
-        # 1. Animacja wysokości panelu czatu
-        self.anim_chat = QPropertyAnimation(self.chat_panel, b"maximumHeight") # Używamy property pośrednio przez fixedHeight
-        # Trick na animację widgetu w layoucie: animujemy fixedHeight programowo
-        self.animation_timer = QTimer()
-        self.animation_step = 0
-        self.animation_frames = 20
-        self.h_diff = end_h - start_h
-        self.current_h = start_h
-        
-        # Prosta pętla animacji manualnej (bo layouty w Qt ciężko się animuje property)
-        def animate_step():
-            self.current_h += self.h_diff / self.animation_frames
-            if (self.h_diff > 0 and self.current_h >= end_h) or (self.h_diff < 0 and self.current_h <= end_h):
-                self.chat_panel.setFixedHeight(end_h)
-                self.animation_timer.stop()
-                if not open: self.chat_panel.hide()
-                # Korekta wielkości okna na koniec
-                self.resize(self.width(), total_h)
+        def animate():
+            self.current_chat_h += self.step
+            if (expand and self.current_chat_h >= chat_target_h) or (not expand and self.current_chat_h <= 0):
+                self.chat_area.setFixedHeight(chat_target_h)
+                self.resize(self.width(), target_h)
+                self.anim_timer.stop()
+                if not expand: self.chat_area.hide()
             else:
-                self.chat_panel.setFixedHeight(int(self.current_h))
-                # Dynamiczna zmiana wielkości okna w trakcie
-                self.resize(self.width(), duck_h + int(self.current_h))
-                
-        self.animation_timer.timeout.connect(animate_step)
-        self.animation_timer.start(10)
+                h = int(self.current_chat_h)
+                self.chat_area.setFixedHeight(h)
+                self.resize(self.width(), DUCK_AREA_HEIGHT + h + 20)
+        
+        self.anim_timer.timeout.connect(animate)
+        self.anim_timer.start(10)
 
-    # --- RESZTA LOGIKI WIZUALNEJ ---
-    def getOpacity(self): return self._opacity
-    def setOpacity(self, o): 
-        self._opacity = o
-        self.setWindowOpacity(o)
-    opacity_prop = pyqtProperty(float, getOpacity, setOpacity)
+    # --- STRESS LOGIC ---
+    def update_stress(self, stress):
+        self.stress_level = stress
+        
+        if stress < 0.2: 
+            self.change_state("zen")
+            self.toggle_expand(False)
+            self.has_triggered_intro = False
+        elif stress < 0.5: 
+            self.change_state("focus")
+            self.toggle_expand(False)
+            self.has_triggered_intro = False
+        elif stress < 0.8: 
+            self.change_state("worry")
+            self.toggle_expand(False)
+            self.has_triggered_intro = False
+        else: 
+            self.change_state("stoic")
+            self.toggle_expand(True)
+            
+            if not self.has_triggered_intro:
+                self.has_triggered_intro = True
+                self.handle_user_message("SYSTEM_TRIGGER: HIGH_STRESS")
 
-    def change_state_smooth(self, state_name):
+    def change_state(self, state_name):
         if state_name == self.current_state_name: return
         
         data = DUCK_STATES[state_name]
-        self.duck_container.setBorderColor(data["color"])
-        self.glow.setColor(QColor(data["color"]))
+        new_color = data["color"]
         
-        # Animacja GIFa
-        self.anim_out = QPropertyAnimation(self, b"opacity_prop")
-        self.anim_out.setDuration(150)
-        self.anim_out.setStartValue(1.0)
-        self.anim_out.setEndValue(0.0)
-        self.anim_out.finished.connect(lambda: self._finish_transition(state_name))
-        self.anim_out.start()
-
-    def _finish_transition(self, state_name):
+        self.shell.setBorderColor(new_color)
+        
+        # Jeśli kaczka NIE MÓWI, aktualizuj cień natychmiast.
+        # Jeśli MÓWI (jest złota), nie przeszkadzaj jej - funkcja _reset_glow naprawi to po zakończeniu.
+        if not self.is_speaking:
+            self.glow.setColor(QColor(new_color))
+        
         self._load_gif(state_name)
-        self.anim_in = QPropertyAnimation(self, b"opacity_prop")
-        self.anim_in.setDuration(300)
-        self.anim_in.setStartValue(0.0)
-        self.anim_in.setEndValue(1.0)
-        self.anim_in.start()
+        self.current_state_name = state_name
 
     def _load_gif(self, state_name):
         path = DUCK_STATES[state_name]["path"]
@@ -325,79 +389,53 @@ class ModernDuckWidget(QWidget):
         
         if self.movie: self.movie.stop()
         self.movie = QMovie(path)
-        # Rozmiar kaczki wewnątrz
-        size = VISUAL_WIDTH - (INTERNAL_MARGIN * 2)
-        self.movie.setScaledSize(QSize(size, size))
-        self.label.setMovie(self.movie)
+        s = WIDTH - (MARGIN * 2)
+        self.movie.setScaledSize(QSize(s, s))
+        self.duck_area.label.setMovie(self.movie)
         self.movie.start()
-        self.current_state_name = state_name
 
-    def _on_user_message(self, text):
-        if self.ai_callback:
-            threading.Thread(target=lambda: self._handle_ai(text), daemon=True).start()
-
-    def _handle_ai(self, text):
-        # Symulacja opóźnienia AI
-        time.sleep(1) 
-        response = self.ai_callback(text, self.stress_level)
-        # Bezpieczne wywołanie GUI z wątku
-        QTimer.singleShot(0, lambda: self.chat_panel.add_ai_response(response))
-
-    # --- MYSZKA I MENU ---
+    # --- MOUSE EVENTS ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.oldPos = event.globalPosition().toPoint()
+            self.dragPos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+            event.accept()
 
     def mouseReleaseEvent(self, event):
+        self.dragPos = None
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        event.accept()
 
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton:
-            delta = QPoint(event.globalPosition().toPoint() - self.oldPos)
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.oldPos = event.globalPosition().toPoint()
+        if event.buttons() == Qt.MouseButton.LeftButton and self.dragPos:
+            self.move(event.globalPosition().toPoint() - self.dragPos)
+            event.accept()
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background: white; border: 1px solid #ddd; padding: 5px; }")
-        
-        # Pokaż opcję czatu TYLKO jeśli jesteśmy w trybie Stoic
-        if self.current_state_name == "stoic":
-            toggle_act = QAction("Schowaj/Pokaż Czat", self)
-            toggle_act.triggered.connect(lambda: self._toggle_chat(not self.is_chat_visible))
-            menu.addAction(toggle_act)
-        else:
-            locked = QAction("🔒 Czat dostępny tylko w trybie Stoika", self)
-            locked.setEnabled(False)
-            menu.addAction(locked)
-
-        quit_app = QAction("Zamknij", self)
-        quit_app.triggered.connect(QApplication.quit)
-        menu.addAction(quit_app)
+        menu.setStyleSheet("QMenu { background: white; border: 1px solid #ddd; padding: 5px; color: black; }")
+        quit_act = QAction("Zamknij", self)
+        quit_act.triggered.connect(QApplication.quit)
+        menu.addAction(quit_act)
         menu.exec(event.globalPosition().toPoint())
 
-# --- KEYBOARD SIMULATION ---
+# --- SIMULATION ---
 def check_hotkeys(widget):
     try:
         if keyboard.is_pressed('1'): widget.update_stress(0.1)
         elif keyboard.is_pressed('2'): widget.update_stress(0.4)
         elif keyboard.is_pressed('3'): widget.update_stress(0.7)
-        elif keyboard.is_pressed('4'): widget.update_stress(0.95) # TO OTWORZY CZAT
+        elif keyboard.is_pressed('4'): widget.update_stress(0.95)
         elif keyboard.is_pressed('q'): QApplication.quit()
     except: pass
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    duck = ModernDuckWidget(debug_mode=True)
+    widget = StoicDuckWidget()
+    widget.show()
     
-    # Callback AI
-    duck.ai_callback = lambda msg, stress: f"Jako Marek Aureliusz w kaczce rzekę: {msg} to błahostka."
-    
-    duck.show()
-    
-    timer = QTimer()
-    timer.timeout.connect(lambda: check_hotkeys(duck))
-    timer.start(100)
+    t = QTimer()
+    t.timeout.connect(lambda: check_hotkeys(widget))
+    t.start(100)
     
     sys.exit(app.exec())
