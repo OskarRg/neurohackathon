@@ -7,6 +7,7 @@ from source.philosopher.utils import STOIC_VOICE_ID
 
 load_dotenv()
 
+
 class VoiceEngine:
     def __init__(self) -> None:
         """
@@ -15,7 +16,7 @@ class VoiceEngine:
         api_key: str = os.getenv("ELEVENLABS_API_KEY")
         if not api_key:
             raise ValueError(" Missing key `ELEVENLABS_API_KEY` in the file `.env`")
-        
+
         self.client: ElevenLabs = ElevenLabs(api_key=api_key)
         self.voice_id: str = STOIC_VOICE_ID
 
@@ -35,14 +36,12 @@ class VoiceEngine:
 
         try:
             audio_generator: Iterator[bytes] = self.client.text_to_speech.convert(
-                text=text,
-                voice_id=self.voice_id,
-                model_id="eleven_turbo_v2_5" 
+                text=text, voice_id=self.voice_id, model_id="eleven_turbo_v2_5"
             )
             print(audio_generator)
             print("typ", type(audio_generator))
             temp_file: str = "temp_speech.mp3"
-            
+
             with open(temp_file, "wb") as f:
                 for chunk in audio_generator:
                     f.write(chunk)
@@ -54,7 +53,7 @@ class VoiceEngine:
     def _play_file(self, file_path):
         """
         Plays out the audio.
-        
+
         :param file_path: Audio file path.
         """
         try:
@@ -66,9 +65,10 @@ class VoiceEngine:
 
             while pygame.mixer.music.get_busy():
                 pygame.time.Clock().tick(10)
-                
+
         except Exception as e:
             print(f"Error while playing audio: {e}")
+
 
 if __name__ == "__main__":
     engine: VoiceEngine = VoiceEngine()
