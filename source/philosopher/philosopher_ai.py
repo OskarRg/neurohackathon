@@ -2,6 +2,7 @@ import threading
 import time
 import pygame
 from source.philosopher.gemini_brain import GeminiBrain
+from source.philosopher.utils import GONG_SOUND_PATH
 from source.philosopher.voice_engine import VoiceEngine
 
 
@@ -19,11 +20,11 @@ class PhilosopherAI:
         self.cooldown_seconds = 60  # Np. 60 seconds timeout between
 
         try:
-            pygame.mixer.Sound("assets/gong_sound.mp3")
+            self.gong: pygame.mixer.Sound | None = pygame.mixer.Sound(GONG_SOUND_PATH)
         except Exception:
-            self.gong = None
+            self.gong: pygame.mixer.Sound | None = None
 
-    def trigger_intervention(self, force=False):
+    def trigger_intervention(self, user_context: str, force=False):
         """
         Main pipeline that is run in main.py.
         Decides when to run the intervention in the background.
@@ -41,10 +42,12 @@ class PhilosopherAI:
         self.last_intervention_time: float = current_time
         self.is_speaking = True
 
-        thread: threading.Thread = threading.Thread(target=self._intervention_process)
+        thread: threading.Thread = threading.Thread(
+            target=self._intervention_process, args=(user_context,)
+        )
         thread.start()
 
-    def _intervention_process(self):
+    def _intervention_process(self, user_context: str):
         """
         The code that runs the AI logic in the background.
         Creates response for the user input, and converts it into `.mp3` file.
@@ -54,8 +57,8 @@ class PhilosopherAI:
                 self.gong.play()
                 time.sleep(2)
 
-            advice: str = self.brain.generate_stoic_advice()
-
+            advice: str = self.brain.generate_stoic_advice(user_context=user_context)
+            print("Advice: ", advice)
             self.voice.speak(advice)
 
         except Exception as e:

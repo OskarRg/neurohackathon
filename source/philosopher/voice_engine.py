@@ -38,8 +38,6 @@ class VoiceEngine:
             audio_generator: Iterator[bytes] = self.client.text_to_speech.convert(
                 text=text, voice_id=self.voice_id, model_id="eleven_turbo_v2_5"
             )
-            print(audio_generator)
-            print("typ", type(audio_generator))
             temp_file: str = "temp_speech.mp3"
 
             with open(temp_file, "wb") as f:
