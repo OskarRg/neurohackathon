@@ -31,31 +31,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger("StoicQuack")
 
-# --- 1. KONFIGURACJA I STAŁE (HYBRYDA: STYL 2025 + BIAŁE TŁO) ---
+# --- 1. KONFIGURACJA (WHITE THEME 2.0) ---
 
 @dataclass(frozen=True)
 class AppConfig:
-    APP_NAME: str = "StoicQuack AI"
-    WIDTH: int = 320
-    DUCK_AREA_HEIGHT: int = 340 
+    APP_NAME: str = "StoicQuack Pro"
+    WIDTH: int = 300
+    DUCK_AREA_HEIGHT: int = 320
     CHAT_HEIGHT: int = 400
-    BORDER_RADIUS: int = 24
-    MARGIN: int = 24
+    BORDER_RADIUS: int = 30
+    MARGIN: int = 25
     
-    # --- TŁO ZMIENIONE NA BIAŁE (ZGODNIE Z PROŚBĄ) ---
-    BG_COLOR: str = "#FFFFFF" 
+    # Kolory
+    BG_COLOR: str = "#FFFFFF"       
+    TEXT_PRIMARY: str = "#1A1A1A"   
+    TEXT_SECONDARY: str = "#666666" 
+    INPUT_BG: str = "#F5F5F5"       
     
-    # Kolory Tekstu (Dostosowane do białego tła)
-    TEXT_PRIMARY: str = "#2D3436"   # Ciemnoszary
-    TEXT_SECONDARY: str = "#636E72" # Szary
-    INPUT_BG: str = "#F5F5F5"       # Jasnoszary input
+    # --- GRADIENTY ---
+    GRADIENT_ZEN: Tuple[str, str] = ("#00F260", "#0575E6")    
+    GRADIENT_FOCUS: Tuple[str, str] = ("#667eea", "#764ba2")  
+    GRADIENT_WORRY: Tuple[str, str] = ("#FF8008", "#FFC837")  
+    GRADIENT_STOIC: Tuple[str, str] = ("#F2994A", "#F2C94C")  
     
-    # Gradienty (Zachowane z poprzedniego stylu)
-    GRADIENT_ZEN: Tuple[str, str] = ("#00F260", "#0575E6")
-    GRADIENT_FOCUS: Tuple[str, str] = ("#434343", "#000000")
-    GRADIENT_WORRY: Tuple[str, str] = ("#FF8008", "#FFC837")
-    GRADIENT_STOIC: Tuple[str, str] = ("#F2994A", "#F2C94C")
-    
+    # Kolory pojedyncze (pomocnicze)
+    COLOR_STOIC: str = "#F2994A" # Złoty kolor dla tekstu Mentora
+
+    # AI Settings
     AI_THINK_MIN_SEC: float = 0.5
     AI_THINK_MAX_SEC: float = 1.5
 
@@ -72,7 +74,7 @@ DUCK_STATES_CONFIG = {
     DuckState.STOIC: {"file": "duck_stoic.gif", "grad": AppConfig.GRADIENT_STOIC}
 }
 
-# --- 2. STYLE MANAGER (CSS - Dostosowany do jasnego tła) ---
+# --- 2. STYLE MANAGER (CSS) ---
 
 class StyleSheetManager:
     @staticmethod
@@ -80,9 +82,9 @@ class StyleSheetManager:
         return f"""
             QProgressBar {{
                 border: none;
-                background-color: #E0E0E0; /* Jasnoszary pasek tła */
+                background-color: #F0F2F5;
                 border-radius: 4px;
-                height: 6px;
+                height: 8px;
             }}
             QProgressBar::chunk {{
                 background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, 
@@ -92,27 +94,29 @@ class StyleSheetManager:
         """
 
     @staticmethod
-    def get_chat_style() -> str:
+    def get_chat_style(accent_color: str) -> str:
         return f"""
             QTextEdit {{
                 background: transparent;
                 color: {AppConfig.TEXT_PRIMARY};
                 font-family: 'Segoe UI', sans-serif;
-                font-size: 13px;
+                font-size: 11px;
+                line-height: 1.4;
                 border: none;
             }}
             QScrollBar:vertical {{
                 border: none;
-                background: transparent;
+                background: #F7F7F7;
                 width: 6px;
                 margin: 0px;
+                border-radius: 3px;
             }}
             QScrollBar::handle:vertical {{
-                background-color: #C0C0C0; /* Jasnoszary uchwyt */
+                background-color: {accent_color};
                 min-height: 20px;
                 border-radius: 3px;
             }}
-            QScrollBar::handle:vertical:hover {{ background-color: #A0A0A0; }}
+            QScrollBar::handle:vertical:hover {{ background-color: #555; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
         """
@@ -122,15 +126,15 @@ class StyleSheetManager:
         return f"""
             QTextEdit {{
                 background-color: {AppConfig.INPUT_BG};
-                border: 1px solid #E0E0E0;
+                border: 1px solid #E0E6ED;
                 border-radius: 20px;
                 color: {AppConfig.TEXT_PRIMARY};
-                padding: 10px 15px;
+                padding: 8px 12px;
                 font-family: 'Segoe UI';
-                font-size: 13px;
+                font-size: 12px;
             }}
             QTextEdit:focus {{
-                border: 1px solid #B0B0B0;
+                border: 1px solid #74B9FF;
                 background-color: #FFFFFF;
             }}
         """
@@ -142,13 +146,13 @@ class StyleSheetManager:
                 background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, 
                                                   stop:0 {color1}, stop:1 {color2});
                 color: white;
-                border-radius: 22px;
+                border-radius: 20px;
                 font-weight: bold;
                 border: none;
                 font-size: 16px;
-                padding-bottom: 2px;
+                padding-bottom: 3px;
             }}
-            QPushButton:hover {{ 
+            QPushButton:hover {{
                 margin-top: 1px;
             }}
         """
@@ -173,32 +177,39 @@ class AIWorker(QThread):
         self.stress_level = stress_level
 
     def run(self):
-        time.sleep(random.uniform(0.5, 1.5))
+        time.sleep(random.uniform(AppConfig.AI_THINK_MIN_SEC, AppConfig.AI_THINK_MAX_SEC))
         response, duration = self._mock_brain()
         self.response_ready.emit(response, duration)
 
     def _mock_brain(self) -> Tuple[str, float]:
         if "SYSTEM_TRIGGER" in self.user_text:
-            return "Wykryto wysoki poziom stresu. Jestem tutaj.", 2.0
+            return "Wykryto wysoki poziom stresu. Jestem tutaj, aby pomóc.", 2.0
         
-        responses = [
-            "Kod jest narzędziem, Ty jesteś twórcą.",
-            "Błąd to informacja, nie porażka.",
-            "Wdech... i wydech."
-        ]
+        if self.stress_level > 0.8:
+            responses = [
+                "Widzę chaos w Twoim kodzie. Zatrzymaj się.",
+                "Gniew to kwas. Nie kompiluj pod wpływem emocji."
+            ]
+        else:
+            responses = [
+                "Płyniesz z prądem kodu. Doskonale.",
+                "Umysł czysty jak pusty plik main.py."
+            ]
         text = random.choice(responses)
-        return text, 2.0
+        return text, len(text.split()) * 0.4
 
 # --- 5. KOMPONENTY UI ---
 
-class PremiumFrame(QFrame):
+class UnifiedFrame(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet("background: transparent;")
+        self._border_color = QColor(AppConfig.GRADIENT_ZEN[1])
+        self._bg_color = QColor(AppConfig.BG_COLOR)
         self._gradient_colors = AppConfig.GRADIENT_ZEN
 
-    def set_gradient(self, colors: Tuple[str, str]):
+    def set_border_gradient(self, colors: Tuple[str, str]):
         self._gradient_colors = colors
         self.update()
 
@@ -206,21 +217,21 @@ class PremiumFrame(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
+        rect = QRectF(self.rect()).adjusted(3, 3, -3, -3)
         path = QPainterPath()
         path.addRoundedRect(rect, AppConfig.BORDER_RADIUS, AppConfig.BORDER_RADIUS)
 
-        # TŁO BIAŁE
-        painter.setBrush(QBrush(QColor(AppConfig.BG_COLOR)))
+        # Tło
+        painter.setBrush(QBrush(self._bg_color))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPath(path)
 
-        # RAMKA GRADIENTOWA
+        # Ramka Gradientowa
         gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
         gradient.setColorAt(0, QColor(self._gradient_colors[0]))
         gradient.setColorAt(1, QColor(self._gradient_colors[1]))
         
-        pen = QPen(QBrush(gradient), 3)
+        pen = QPen(QBrush(gradient), 6)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
@@ -233,11 +244,13 @@ class DuckArea(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(AppConfig.MARGIN, AppConfig.MARGIN, AppConfig.MARGIN, 10)
         
+        # GIF
         self.label = QLabel()
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(self.label)
         
+        # Pasek
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(6)
         self.progress_bar.setTextVisible(False)
@@ -245,6 +258,7 @@ class DuckArea(QWidget):
         
         layout.addSpacing(20)
         layout.addWidget(self.progress_bar)
+        
         self.update_style(AppConfig.GRADIENT_ZEN)
         self.movie = None
         self.target_size = QSize(100, 100) 
@@ -263,7 +277,8 @@ class DuckArea(QWidget):
         
         if self.movie:
             self.movie.stop()
-            self.movie.frameChanged.disconnect()
+            try: self.movie.frameChanged.disconnect()
+            except: pass
             
         self.movie = QMovie(path)
         self.movie.setCacheMode(QMovie.CacheMode.CacheAll)
@@ -293,14 +308,14 @@ class ChatArea(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 0, 20, 25)
         
-        # Divider (Jasny)
+        # Divider
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setStyleSheet("background-color: #E0E0E0; border: none; max-height: 1px;")
         layout.addWidget(line)
 
         # Header
-        header = QLabel("STOIC MENTOR AI")
+        header = QLabel("MENTOR STOICKI")
         header.setStyleSheet(f"color: {AppConfig.TEXT_SECONDARY}; font-weight: 700; font-family: 'Segoe UI'; margin-top: 15px; font-size: 10px; letter-spacing: 2px;")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
@@ -308,21 +323,23 @@ class ChatArea(QWidget):
         # History
         self.history = QTextEdit()
         self.history.setReadOnly(True)
-        self.history.setStyleSheet(StyleSheetManager.get_chat_style())
+        self.history.setStyleSheet(StyleSheetManager.get_chat_style(AppConfig.GRADIENT_ZEN[1]))
         layout.addWidget(self.history)
         
-        # Input Area
+        # Input Box
         input_box = QHBoxLayout()
-        input_box.setSpacing(10)
+        input_box.setSpacing(10) 
         
+        # Input
         self.input = QTextEdit()
-        self.input.setPlaceholderText("Type a thought...")
-        self.input.setFixedHeight(45)
+        self.input.setPlaceholderText("Wpisz myśl...")
+        self.input.setFixedHeight(40)
         self.input.setStyleSheet(StyleSheetManager.get_input_style())
         self.input.keyPressEvent = self._on_key
         
+        # Button
         self.btn = QPushButton("➤") 
-        self.btn.setFixedSize(45, 45)
+        self.btn.setFixedSize(40, 40)
         self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn.setStyleSheet(StyleSheetManager.get_send_btn_style(AppConfig.GRADIENT_ZEN[0], AppConfig.GRADIENT_ZEN[1]))
         self.btn.clicked.connect(self._send)
@@ -332,6 +349,7 @@ class ChatArea(QWidget):
         layout.addLayout(input_box)
 
     def update_accent(self, colors: Tuple[str, str]):
+        self.history.setStyleSheet(StyleSheetManager.get_chat_style(colors[1]))
         self.btn.setStyleSheet(StyleSheetManager.get_send_btn_style(colors[0], colors[1]))
 
     def _on_key(self, event):
@@ -344,32 +362,54 @@ class ChatArea(QWidget):
     def _send(self):
         text = self.input.toPlainText().strip()
         if not text: return
-        self._append_message("You", text, is_user=True)
+        self._append_message("TY", text, is_user=True)
         self.input.clear()
         self.message_sent.emit(text)
 
     def add_response(self, text):
-        self._append_message("Mentor", text, is_user=False)
+        self._append_message("MENTOR", text, is_user=False)
 
     def _append_message(self, sender: str, text: str, is_user: bool):
-        # Dostosowane dymki do białego tła
+        """
+        Dodaje wiadomość do czatu w układzie listy (wszystkie po lewej).
+        """
+        
         if is_user:
-            html = f"""
-            <div style="width: 100%; display: flex; justify-content: flex-end;">
-                <div style="background-color: #E0E0E0; color: #2D3436; padding: 10px 14px; border-radius: 15px; margin-bottom: 8px; font-size: 13px;">
-                    {text}
-                </div>
-            </div>
-            """
+            label_color = "#999999"  # Szary dla "TY"
+            label_text = "TY"
         else:
-            html = f"""
-            <div style="width: 100%; margin-bottom: 12px;">
-                <div style="color: #B2BEC3; font-size: 10px; margin-bottom: 2px; font-weight: bold;">MENTOR</div>
-                <div style="color: #2D3436; font-size: 13px; line-height: 1.4;">
-                    {text}
-                </div>
+            label_color = AppConfig.COLOR_STOIC  # Złoty dla "MENTOR"
+            label_text = "MENTOR"
+
+        # Style CSS dla wiadomości (bez tła, oddzielone linią)
+        html = f"""
+        <div style="
+            display: flex; 
+            flex-direction: column; 
+            align-items: flex-start; 
+            margin-bottom: 10px; 
+            border-bottom: 1px solid #F5F5F5; 
+            padding-bottom: 8px;">
+            
+            <div style="
+                color: {label_color}; 
+                font-size: 9px; 
+                margin-bottom: 3px; 
+                font-weight: bold; 
+                letter-spacing: 0.5px;">
+                {label_text}
             </div>
-            """
+            
+            <div style="
+                color: {AppConfig.TEXT_PRIMARY}; 
+                font-size: 12px; 
+                line-height: 1.4; 
+                text-align: left;">
+                {text}
+            </div>
+        </div>
+        """
+        
         self.history.append(html)
         sb = self.history.verticalScrollBar()
         sb.setValue(sb.maximum())
@@ -407,7 +447,7 @@ class StoicDuckPro(QWidget):
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(20, 20, 20, 20)
         
-        self.shell = PremiumFrame()
+        self.shell = UnifiedFrame()
         self.main_layout.addWidget(self.shell)
         
         self.inner_layout = QVBoxLayout(self.shell)
@@ -423,11 +463,11 @@ class StoicDuckPro(QWidget):
         self.chat_area.message_sent.connect(self._handle_user_message)
         self.inner_layout.addWidget(self.chat_area)
 
-        # Cień (Delikatny)
+        # Cień
         self.glow = QGraphicsDropShadowEffect()
         self.glow.setBlurRadius(50)
         self.glow.setOffset(0, 8)
-        self.glow.setColor(QColor(0, 0, 0, 30)) 
+        self.glow.setColor(QColor(0, 0, 0, 30))
         self.shell.setGraphicsEffect(self.glow)
 
     def update_stress(self, stress: float):
@@ -453,11 +493,12 @@ class StoicDuckPro(QWidget):
         self.current_state_enum = state_enum
         
         config = DUCK_STATES_CONFIG[state_enum]
+        colors = config["grad"]
         
-        # Update Colors (Gradients + White BG)
-        self.shell.set_gradient(config["grad"])
-        self.duck_area.update_style(config["grad"])
-        self.chat_area.update_accent(config["grad"])
+        # Update UI
+        self.shell.set_border_gradient(colors)
+        self.duck_area.update_style(colors)
+        self.chat_area.update_accent(colors)
         
         self._load_gif(config["file"])
 
@@ -524,6 +565,14 @@ class StoicDuckPro(QWidget):
         if event.buttons() == Qt.MouseButton.LeftButton and self.drag_pos:
             self.move(event.globalPosition().toPoint() - self.drag_pos)
             event.accept()
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu { background: white; border: 1px solid #ddd; padding: 5px; color: black; }")
+        ac = QAction("Zamknij", self)
+        ac.triggered.connect(QApplication.quit)
+        menu.addAction(ac)
+        menu.exec(event.globalPosition().toPoint())
 
 # --- ENTRY POINT ---
 def dev_hotkeys(app):
