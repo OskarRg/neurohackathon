@@ -1,88 +1,215 @@
 import sys
 import os
-import keyboard
-import threading
-import time
 import random
-from PyQt6.QtWidgets import (QApplication, QLabel, QWidget, QVBoxLayout, QFrame,
-                             QGraphicsDropShadowEffect, QTextEdit, QPushButton,
-                             QHBoxLayout, QProgressBar)
-from PyQt6.QtCore import (Qt, QTimer, QSize, QPropertyAnimation, 
-                          QEasingCurve, pyqtProperty, QRectF, pyqtSignal, QObject)
-from PyQt6.QtGui import (QMovie, QColor, QCursor, QAction, QPainter, 
-                         QPainterPath, QPen, QBrush)
+import time
+import logging
+import keyboard
+from dataclasses import dataclass
+from enum import Enum
+from typing import Tuple
 
-# --- KONFIGURACJA ---
-ASSETS_DIR = "assets"
-DUCK_STATES = {
-    "zen":   {"path": os.path.join(ASSETS_DIR, "duck_zen.gif"),   "color": "#00d2ff"},
-    "focus": {"path": os.path.join(ASSETS_DIR, "duck_focus.gif"), "color": "#8899a6"},
-    "worry": {"path": os.path.join(ASSETS_DIR, "duck_worry.gif"), "color": "#ff9900"},
-    "stoic": {"path": os.path.join(ASSETS_DIR, "duck_stoic.gif"), "color": "#ffd700"}
+# PyQt Imports
+from PyQt6.QtWidgets import (
+    QApplication, QLabel, QWidget, QVBoxLayout, QFrame,
+    QGraphicsDropShadowEffect, QTextEdit, QPushButton,
+    QHBoxLayout, QProgressBar
+)
+from PyQt6.QtCore import (
+    Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, 
+    pyqtProperty, QRectF, pyqtSignal, QObject, QThread, QPoint
+)
+from PyQt6.QtGui import (
+    QMovie, QColor, QCursor, QPainter, 
+    QPainterPath, QPen, QBrush, QFont, QLinearGradient, QGradient
+)
+
+# --- 0. LOGGING SETUP ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("StoicQuack")
+
+# --- 1. CONFIGURATION & THEME (2025 DESIGN SYSTEM) ---
+
+@dataclass(frozen=True)
+class AppConfig:
+    APP_NAME: str = "StoicQuack AI"
+    WIDTH: int = 320
+    DUCK_AREA_HEIGHT: int = 340 
+    CHAT_HEIGHT: int = 400
+    BORDER_RADIUS: int = 24
+    MARGIN: int = 24
+    
+    # Colors (Clean White Theme)
+    BG_COLOR: str = "#FFFFFF" 
+    TEXT_PRIMARY: str = "#1A1A1A"   # Prawie czarny, lepszy dla oczu
+    TEXT_SECONDARY: str = "#757575" # Szary
+    INPUT_BG: str = "#F3F4F6"       # Nowoczesny szary (Tailwind Gray-100)
+    
+    # Gradients
+    GRADIENT_ZEN: Tuple[str, str] = ("#00F260", "#0575E6")
+    GRADIENT_FOCUS: Tuple[str, str] = ("#434343", "#000000")
+    GRADIENT_WORRY: Tuple[str, str] = ("#FF8008", "#FFC837")
+    GRADIENT_STOIC: Tuple[str, str] = ("#F2994A", "#F2C94C")
+    
+    # AI Settings
+    AI_THINK_MIN_SEC: float = 0.5
+    AI_THINK_MAX_SEC: float = 1.5
+
+class DuckState(Enum):
+    ZEN = "zen"
+    FOCUS = "focus"
+    WORRY = "worry"
+    STOIC = "stoic"
+
+DUCK_STATES_CONFIG = {
+    DuckState.ZEN:   {"file": "duck_zen.gif",   "grad": AppConfig.GRADIENT_ZEN},
+    DuckState.FOCUS: {"file": "duck_focus.gif", "grad": AppConfig.GRADIENT_FOCUS},
+    DuckState.WORRY: {"file": "duck_worry.gif", "grad": AppConfig.GRADIENT_WORRY},
+    DuckState.STOIC: {"file": "duck_stoic.gif", "grad": AppConfig.GRADIENT_STOIC}
 }
 
-# --- WYMIARY ---
-WIDTH = 280                 
-DUCK_AREA_HEIGHT = 300 # Zwiększono lekko, żeby zmieścić pasek
-CHAT_AREA_HEIGHT = 300      
-BORDER_RADIUS = 40          
-MARGIN = 30                 
+# --- 2. STYLE MANAGER (MODERN UI) ---
 
-# ==========================================
-# MOCK BACKEND
-# ==========================================
-class MockPhilosopherBrain:
+class StyleSheetManager:
     @staticmethod
-    def get_response(user_text, stress_level):
-        time.sleep(random.uniform(0.5, 1.5)) 
+    def get_progress_bar_style(color_start: str, color_end: str) -> str:
+        return f"""
+            QProgressBar {{
+                border: none;
+                background-color: #F3F4F6;
+                border-radius: 3px;
+                height: 6px;
+            }}
+            QProgressBar::chunk {{
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, 
+                                                  stop:0 {color_start}, stop:1 {color_end});
+                border-radius: 3px;
+            }}
+        """
+
+    @staticmethod
+    def get_chat_style() -> str:
+        # Nowoczesny scrollbar i typografia
+        return f"""
+            QTextEdit {{
+                background: transparent;
+                color: {AppConfig.TEXT_PRIMARY};
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 13px;
+                line-height: 1.5; /* Większy odstęp między liniami */
+                border: none;
+            }}
+            /* Invisible Scrollbar Track */
+            QScrollBar:vertical {{
+                border: none;
+                background: transparent;
+                width: 6px;
+                margin: 0px;
+            }}
+            /* Modern Rounded Handle */
+            QScrollBar::handle:vertical {{
+                background-color: #D1D5DB; /* Neutral Gray */
+                min-height: 30px;
+                border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background-color: #9CA3AF; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+        """
+
+    @staticmethod
+    def get_input_style() -> str:
+        # Input jak "kapsuła"
+        return f"""
+            QTextEdit {{
+                background-color: {AppConfig.INPUT_BG};
+                border: 1px solid transparent;
+                border-radius: 20px;
+                color: {AppConfig.TEXT_PRIMARY};
+                padding: 10px 15px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 13px;
+            }}
+            QTextEdit:focus {{
+                background-color: #FFFFFF;
+                border: 1px solid #D1D5DB; /* Subtelna ramka przy fokusie */
+            }}
+        """
+
+    @staticmethod
+    def get_send_btn_style(color1: str, color2: str) -> str:
+        # Gradientowy przycisk z cieniem
+        return f"""
+            QPushButton {{
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, 
+                                                  stop:0 {color1}, stop:1 {color2});
+                color: white;
+                border-radius: 22px; /* Idealne koło dla 44px */
+                font-weight: bold;
+                border: none;
+                font-size: 16px;
+                padding-bottom: 2px; /* Korekta optyczna ikony */
+            }}
+            QPushButton:hover {{ 
+                margin-top: 1px;
+            }}
+            QPushButton:pressed {{
+                background-color: {color2};
+                margin-top: 2px;
+            }}
+        """
+
+# --- 3. HELPERY ---
+
+class ResourceManager:
+    @staticmethod
+    def get_asset_path(filename: str) -> str:
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(base_path, "assets", filename)
+        return path
+
+# --- 4. BACKEND MOCK ---
+
+class AIWorker(QThread):
+    response_ready = pyqtSignal(str, float)
+
+    def __init__(self, user_text: str, stress_level: float):
+        super().__init__()
+        self.user_text = user_text
+        self.stress_level = stress_level
+
+    def run(self):
+        time.sleep(random.uniform(AppConfig.AI_THINK_MIN_SEC, AppConfig.AI_THINK_MAX_SEC))
+        response, duration = self._mock_brain()
+        self.response_ready.emit(response, duration)
+
+    def _mock_brain(self) -> Tuple[str, float]:
+        if "SYSTEM_TRIGGER" in self.user_text:
+            return "Wykryto wysoki poziom stresu. Jestem tutaj, aby pomóc.", 2.0
         
-        if "SYSTEM_TRIGGER" in user_text:
-            return "Widzę, że poziom stresu jest krytyczny. Jestem tutaj. Opowiedz mi o tym.", 2.0
-
-        if stress_level > 0.8:
-            responses = [
-                "Widzę chaos w Twoim kodzie. Zatrzymaj się.",
-                "Gniew to kwas, który niszczy naczynie.",
-                "Nie kontrolujesz wyniku, ale swoje podejście."
-            ]
-        elif stress_level > 0.4:
-            responses = [
-                "Skupienie jest kluczem.",
-                "Nie martw się przyszłymi błędami.",
-                "Pisz dalej, ale z rozwagą."
-            ]
-        else:
-            responses = [
-                "Płyniesz z prądem kodu.",
-                "Umysł czysty jak pusty plik.",
-                "Spokój jest Twoją siłą."
-            ]
-            
+        responses = [
+            "Zatrzymaj się na chwilę. Kod jest tylko narzędziem, Ty jesteś twórcą.",
+            "Wdech... i wydech. Ten błąd nie definiuje Twoich umiejętności.",
+            "Problemy są nieuniknione. Cierpienie jest opcjonalne."
+        ]
         text = random.choice(responses)
-        audio_duration = len(text.split()) * 0.4 
-        return text, audio_duration
+        return text, len(text.split()) * 0.4
 
-# ==========================================
-# FRONTEND (UI)
-# ==========================================
+# --- 5. KOMPONENTY UI ---
 
-class DuckSignals(QObject):
-    stress_changed = pyqtSignal(float)
-    user_message_sent = pyqtSignal(str)
-    ai_response_ready = pyqtSignal(str, float)
-
-# --- UNIFIED FRAME (TŁO) ---
 class UnifiedFrame(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) 
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet("background: transparent;")
-        
-        self._border_color = QColor("#00d2ff")
-        self._bg_color = QColor("#FFFFFF") 
+        self._border_color = QColor(AppConfig.GRADIENT_ZEN[1])
+        self._bg_color = QColor(AppConfig.BG_COLOR)
 
-    def setBorderColor(self, color_hex):
-        self._border_color = QColor(color_hex)
+    def set_border_color(self, color: QColor):
+        self._border_color = color
         self.update()
 
     def paintEvent(self, event):
@@ -91,7 +218,7 @@ class UnifiedFrame(QFrame):
         
         rect = QRectF(self.rect()).adjusted(3, 3, -3, -3)
         path = QPainterPath()
-        path.addRoundedRect(rect, BORDER_RADIUS, BORDER_RADIUS)
+        path.addRoundedRect(rect, AppConfig.BORDER_RADIUS, AppConfig.BORDER_RADIUS)
 
         # Tło
         painter.setBrush(QBrush(self._bg_color))
@@ -105,150 +232,131 @@ class UnifiedFrame(QFrame):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(path)
 
-# --- GÓRA: KACZKA + PASEK STRESU ---
 class DuckArea(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(DUCK_AREA_HEIGHT)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(MARGIN, MARGIN, MARGIN, 15) # Mniejszy margines na dole dla paska
+        self.setFixedHeight(AppConfig.DUCK_AREA_HEIGHT)
         
-        # 1. KACZKA
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(AppConfig.MARGIN, AppConfig.MARGIN, AppConfig.MARGIN, 10)
+        
+        # GIF
         self.label = QLabel()
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setStyleSheet("background: transparent; border: none;")
         layout.addWidget(self.label)
         
-        # 2. PASEK STRESU (Bar)
+        # Pasek
         self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedHeight(6) # Cienki, elegancki pasek
-        self.progress_bar.setTextVisible(False) # Bez tekstu procentowego
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
         
-        # Styl bazowy paska
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: none;
-                background-color: #F0F0F0;
-                border-radius: 3px;
-            }
-            QProgressBar::chunk {
-                background-color: #00d2ff;
-                border-radius: 3px;
-            }
-        """)
-        
-        layout.addSpacing(10) # Odstęp między kaczką a paskiem
+        layout.addSpacing(20)
         layout.addWidget(self.progress_bar)
+        
+        self.update_style(AppConfig.GRADIENT_ZEN)
+        
+        self.movie = None
+        self.target_size = QSize(100, 100) 
 
-    def update_bar_color(self, color_hex):
-        """Aktualizuje kolor paska w zależności od stanu"""
-        self.progress_bar.setStyleSheet(f"""
-            QProgressBar {{
-                border: none;
-                background-color: #F0F0F0;
-                border-radius: 3px;
-            }}
-            QProgressBar::chunk {{
-                background-color: {color_hex};
-                border-radius: 3px;
-            }}
-        """)
+    def update_style(self, colors: Tuple[str, str]):
+        self.progress_bar.setStyleSheet(
+            StyleSheetManager.get_progress_bar_style(colors[0], colors[1])
+        )
 
-    def update_bar_value(self, value_float):
-        """Aktualizuje długość paska (0.0 - 1.0 -> 0 - 100)"""
-        self.progress_bar.setValue(int(value_float * 100))
+    def set_stress_value(self, value: float):
+        self.progress_bar.setValue(int(value * 100))
 
-# --- DÓŁ: CZAT ---
+    def load_gif(self, filename: str):
+        path = ResourceManager.get_asset_path(filename)
+        if not os.path.exists(path): return
+        
+        if self.movie:
+            self.movie.stop()
+            self.movie.frameChanged.disconnect()
+            
+        self.movie = QMovie(path)
+        self.movie.setCacheMode(QMovie.CacheMode.CacheAll)
+        
+        available_w = AppConfig.WIDTH - (AppConfig.MARGIN * 2)
+        self.target_size = QSize(available_w, available_w)
+        
+        self.movie.frameChanged.connect(self._update_frame_hq)
+        self.movie.start()
+
+    def _update_frame_hq(self):
+        current_pixmap = self.movie.currentPixmap()
+        if not current_pixmap.isNull():
+            hq_pixmap = current_pixmap.scaled(
+                self.target_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.label.setPixmap(hq_pixmap)
+
 class ChatArea(QWidget):
     message_sent = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(CHAT_AREA_HEIGHT)
-        
+        self.setFixedHeight(AppConfig.CHAT_HEIGHT)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 5, 20, 20)
+        layout.setContentsMargins(20, 0, 20, 25)
         
-        self.line = QFrame()
-        self.line.setFrameShape(QFrame.Shape.HLine)
-        self.line.setStyleSheet("background-color: #EEEEEE; border: none; max-height: 1px;")
-        layout.addWidget(self.line)
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background-color: #F0F2F5; border: none; max-height: 1px;")
+        layout.addWidget(line)
 
-        self.header = QLabel("🏛️ MENTOR STOICKI")
-        self.header.setStyleSheet("color: #D4AF37; font-weight: bold; font-family: Segoe UI; margin-top: 10px; font-size: 12px;")
-        self.header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.header)
+        # Header (Nowoczesna czcionka z spacingiem)
+        header = QLabel("MENTOR STOICKI")
+        header.setStyleSheet(f"color: {AppConfig.TEXT_SECONDARY}; font-weight: 700; font-family: 'Segoe UI'; margin-top: 15px; font-size: 10px; letter-spacing: 2px;")
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(header)
         
+        # History
         self.history = QTextEdit()
         self.history.setReadOnly(True)
-        self.history.setStyleSheet("""
-            QTextEdit {
-                background: transparent;
-                color: #333333;
-                font-family: Segoe UI;
-                font-size: 12px;
-                border: none;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: #F5F5F5;
-                width: 8px;
-                margin: 0px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #FFD700;
-                min-height: 20px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #FFC107;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: none; border: none; }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-        """)
+        self.history.setStyleSheet(StyleSheetManager.get_chat_style())
         layout.addWidget(self.history)
         
+        # Input Container
         input_box = QHBoxLayout()
+        input_box.setSpacing(10) # Odstęp między inputem a przyciskiem
+        
+        # Input Field
         self.input = QTextEdit()
-        self.input.setPlaceholderText("Napisz... (Ctrl+Enter)")
-        self.input.setFixedHeight(40)
-        self.input.setStyleSheet("""
-            QTextEdit {
-                background-color: #F5F5F5;
-                border-radius: 10px;
-                color: #000000;
-                padding: 5px;
-                border: 1px solid #E0E0E0;
-            }
-        """)
+        self.input.setPlaceholderText("Napisz coś...")
+        self.input.setFixedHeight(44) # Wysokość pasująca do przycisku
+        self.input.setStyleSheet(StyleSheetManager.get_input_style())
         self.input.keyPressEvent = self._on_key
         
-        btn = QPushButton("➤") 
-        btn.setFixedSize(40, 40)
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FFD700;
-                color: black;
-                border-radius: 20px;
-                font-weight: bold;
-                border: none;
-                font-size: 16px;
-                padding-bottom: 2px;
-            }
-            QPushButton:hover { background-color: #FFEA00; }
-            QPushButton:pressed { background-color: #D4AF37; }
-        """)
-        btn.clicked.connect(self._send)
+        # Send Button (Okrągły, Modern)
+        self.btn = QPushButton("➤") 
+        self.btn.setFixedSize(44, 44) # Idealne koło
+        self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        # Cień pod przyciskiem dla efektu 3D/Floating
+        shadow = QGraphicsDropShadowEffect(self.btn)
+        shadow.setBlurRadius(15)
+        shadow.setOffset(0, 4)
+        shadow.setColor(QColor(0, 0, 0, 40))
+        self.btn.setGraphicsEffect(shadow)
+
+        self.btn.setStyleSheet(StyleSheetManager.get_send_btn_style(AppConfig.GRADIENT_ZEN[0], AppConfig.GRADIENT_ZEN[1]))
+        self.btn.clicked.connect(self._send)
         
         input_box.addWidget(self.input)
-        input_box.addWidget(btn)
+        input_box.addWidget(self.btn)
         layout.addLayout(input_box)
 
+    def update_accent(self, colors: Tuple[str, str]):
+        self.btn.setStyleSheet(StyleSheetManager.get_send_btn_style(colors[0], colors[1]))
+
     def _on_key(self, event):
-        if event.key() == Qt.Key.Key_Return and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+        if event.key() == Qt.Key.Key_Return and event.modifiers() == Qt.KeyboardModifier.NoModifier: # Enter wysyła (bez Ctrl)
             self._send()
             event.accept()
         else:
@@ -257,230 +365,220 @@ class ChatArea(QWidget):
     def _send(self):
         text = self.input.toPlainText().strip()
         if not text: return
-        self.history.append(f"<div style='margin-bottom: 5px;'><b style='color:#555'>Ty:</b> {text}</div>")
+        self._append_message("Ty", text, is_user=True)
         self.input.clear()
         self.message_sent.emit(text)
 
     def add_response(self, text):
-        self.history.append(f"<div style='margin-bottom: 10px;'><b style='color:#D4AF37'>Mentor:</b> <i>{text}</i></div>")
+        self._append_message("Mentor", text, is_user=False)
+
+    def _append_message(self, sender: str, text: str, is_user: bool):
+        if is_user:
+            # User: Jasnoszary, zaokrąglony dymek po prawej
+            html = f"""
+            <div style="width: 100%; display: flex; justify-content: flex-end;">
+                <div style="background-color: #F3F4F6; color: #1F2937; padding: 10px 14px; border-radius: 16px 16px 4px 16px; margin-bottom: 8px; font-size: 13px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                    {text}
+                </div>
+            </div>
+            """
+        else:
+            # Mentor: Czysty tekst po lewej z nagłówkiem
+            html = f"""
+            <div style="width: 100%; margin-bottom: 12px;">
+                <div style="color: #9CA3AF; font-size: 10px; margin-bottom: 4px; font-weight: bold; letter-spacing: 0.5px;">MENTOR</div>
+                <div style="color: #374151; font-size: 13px; line-height: 1.5;">
+                    {text}
+                </div>
+            </div>
+            """
+        self.history.append(html)
         sb = self.history.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-# --- GŁÓWNY WIDGET ---
-class StoicDuckWidget(QWidget):
-    signals = DuckSignals()
+# --- 6. MAIN CONTROLLER ---
 
+class StoicDuckPro(QWidget):
     def __init__(self):
         super().__init__()
         
         self.stress_level = 0.0
-        self.current_state_name = ""
+        self.current_state_enum = DuckState.ZEN
         self.is_expanded = False
-        self.has_triggered_intro = False
-        self.dragPos = None
-        self.is_speaking = False 
+        self.is_speaking = False
+        self.drag_pos = None
         
+        self._init_window()
+        self._init_ui()
+        
+        # Initial Load
+        self.change_state(DuckState.ZEN)
+
+    def _init_window(self):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
         screen_geo = QApplication.primaryScreen().availableGeometry()
-        initial_x = screen_geo.width() - WIDTH - 50
-        initial_y = 50
-        self.setGeometry(initial_x, initial_y, WIDTH + 20, DUCK_AREA_HEIGHT + 20)
+        self.setGeometry(
+            screen_geo.width() - AppConfig.WIDTH - 50, 
+            50, 
+            AppConfig.WIDTH + 40, 
+            AppConfig.DUCK_AREA_HEIGHT + 40
+        )
 
-        # 1. Shell
-        self.shell = UnifiedFrame(self)
-        self.window_layout = QVBoxLayout(self)
-        self.window_layout.setContentsMargins(10, 10, 10, 10)
-        self.window_layout.addWidget(self.shell)
-
-        # 2. Wnętrze
-        self.shell_layout = QVBoxLayout(self.shell)
-        self.shell_layout.setContentsMargins(0, 0, 0, 0)
-        self.shell_layout.setSpacing(0)
-
-        # Kaczka (z Paskiem)
-        self.duck_area = DuckArea()
-        self.shell_layout.addWidget(self.duck_area)
+    def _init_ui(self):
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(20, 20, 20, 20)
         
-        # Czat
+        self.shell = UnifiedFrame()
+        self.main_layout.addWidget(self.shell)
+        
+        self.inner_layout = QVBoxLayout(self.shell)
+        self.inner_layout.setContentsMargins(0, 0, 0, 0)
+        self.inner_layout.setSpacing(0)
+        
+        self.duck_area = DuckArea()
+        self.inner_layout.addWidget(self.duck_area)
+        
         self.chat_area = ChatArea()
         self.chat_area.setFixedHeight(0)
         self.chat_area.hide()
-        self.chat_area.message_sent.connect(self.handle_user_message)
-        self.shell_layout.addWidget(self.chat_area)
+        self.chat_area.message_sent.connect(self._handle_user_message)
+        self.inner_layout.addWidget(self.chat_area)
 
-        # Cień
+        # Cień główny (Bardzo miękki)
         self.glow = QGraphicsDropShadowEffect()
-        self.glow.setBlurRadius(40)
-        self.glow.setOffset(0, 0)
-        self.glow.setColor(QColor("#00d2ff"))
+        self.glow.setBlurRadius(60)
+        self.glow.setOffset(0, 8)
+        self.glow.setColor(QColor(0, 0, 0, 30)) # Delikatny, profesjonalny cień
         self.shell.setGraphicsEffect(self.glow)
 
-        self.movie = None
-        self._opacity = 1.0
+    def update_stress(self, stress: float):
+        self.stress_level = max(0.0, min(1.0, stress))
+        self.duck_area.set_stress_value(self.stress_level)
         
-        self.signals.ai_response_ready.connect(self.display_ai_response)
+        new_state = DuckState.ZEN
+        if self.stress_level < 0.2: new_state = DuckState.ZEN
+        elif self.stress_level < 0.5: new_state = DuckState.FOCUS
+        elif self.stress_level < 0.8: new_state = DuckState.WORRY
+        else: new_state = DuckState.STOIC
         
-        self.change_state("zen")
+        if new_state == DuckState.STOIC and not self.is_expanded:
+            self._toggle_expand(True)
+            self._handle_user_message("SYSTEM_TRIGGER: HIGH_STRESS")
+        elif new_state != DuckState.STOIC and self.is_expanded:
+            self._toggle_expand(False)
 
-    def handle_user_message(self, text):
-        threading.Thread(target=self._run_mock_backend, args=(text,), daemon=True).start()
+        self.change_state(new_state)
 
-    def _run_mock_backend(self, user_text):
-        response_text, audio_duration = MockPhilosopherBrain.get_response(user_text, self.stress_level)
-        self.signals.ai_response_ready.emit(response_text, audio_duration)
+    def change_state(self, state_enum: DuckState):
+        if state_enum == self.current_state_enum and self.duck_area.movie: return
+        self.current_state_enum = state_enum
+        
+        config = DUCK_STATES_CONFIG[state_enum]
+        
+        # Update UI
+        self.shell.set_border_color(QColor(config["grad"][1])) # Używamy drugiego koloru z gradientu jako obrys
+        self.duck_area.update_style(config["grad"])
+        self.chat_area.update_accent(config["grad"])
+        
+        self._load_gif(config["file"])
 
-    def display_ai_response(self, text, duration):
+    def _load_gif(self, filename: str):
+        self.duck_area.load_gif(filename)
+
+    def _handle_user_message(self, text: str):
+        self.worker = AIWorker(text, self.stress_level)
+        self.worker.response_ready.connect(self._on_ai_response)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.start()
+
+    def _on_ai_response(self, text: str, duration: float):
         self.chat_area.add_response(text)
-        self._pulse_glow_for_audio(duration)
+        self._voice_effect(duration)
 
-    def _pulse_glow_for_audio(self, duration):
+    def _voice_effect(self, duration):
         self.is_speaking = True
-        self.glow.setColor(QColor("#FFD700"))
-        QTimer.singleShot(int(duration * 1000), self._reset_glow_after_audio)
+        # Podczas mówienia cień zmienia się na złoty
+        self.glow.setColor(QColor(AppConfig.GRADIENT_STOIC[0])) 
+        QTimer.singleShot(int(duration * 1000), self._end_voice_effect)
 
-    def _reset_glow_after_audio(self):
+    def _end_voice_effect(self):
         self.is_speaking = False
-        current_data = DUCK_STATES.get(self.current_state_name, DUCK_STATES["zen"])
-        self.glow.setColor(QColor(current_data["color"]))
+        self.glow.setColor(QColor(0, 0, 0, 30))
 
-    # --- EXPAND LOGIC ---
-    def toggle_expand(self, expand=True):
+    def _toggle_expand(self, expand: bool):
         if self.is_expanded == expand: return
         self.is_expanded = expand
-
-        if expand:
-            self.chat_area.show()
-            target_h = DUCK_AREA_HEIGHT + CHAT_AREA_HEIGHT + 20 
-            chat_target_h = CHAT_AREA_HEIGHT
-        else:
-            target_h = DUCK_AREA_HEIGHT + 20
-            chat_target_h = 0
-
-        self.anim_chat = QPropertyAnimation(self.chat_area, b"maximumHeight")
-        self.anim_timer = QTimer()
-        self.anim_frames = 25
-        self.current_chat_h = 0 if expand else CHAT_AREA_HEIGHT
-        self.step = chat_target_h / self.anim_frames if expand else -CHAT_AREA_HEIGHT / self.anim_frames
         
-        def animate():
-            self.current_chat_h += self.step
-            if (expand and self.current_chat_h >= chat_target_h) or (not expand and self.current_chat_h <= 0):
-                self.chat_area.setFixedHeight(chat_target_h)
-                self.resize(self.width(), target_h)
+        start_h = 0 if expand else AppConfig.CHAT_HEIGHT
+        end_h = AppConfig.CHAT_HEIGHT if expand else 0
+        base_h = AppConfig.DUCK_AREA_HEIGHT + 40
+        
+        if expand: self.chat_area.show()
+
+        self.anim_timer = QTimer()
+        self.anim_step = 0
+        self.anim_steps = 25
+        self.anim_delta = (end_h - start_h) / self.anim_steps
+        self.anim_current_h = start_h
+        
+        def animate_step():
+            self.anim_current_h += self.anim_delta
+            self.anim_step += 1
+            if self.anim_step >= self.anim_steps:
+                self.chat_area.setFixedHeight(end_h)
+                self.resize(self.width(), base_h + end_h)
                 self.anim_timer.stop()
                 if not expand: self.chat_area.hide()
             else:
-                h = int(self.current_chat_h)
+                h = int(self.anim_current_h)
                 self.chat_area.setFixedHeight(h)
-                self.resize(self.width(), DUCK_AREA_HEIGHT + h + 20)
+                self.resize(self.width(), base_h + h)
         
-        self.anim_timer.timeout.connect(animate)
-        self.anim_timer.start(10)
+        self.anim_timer.timeout.connect(animate_step)
+        self.anim_timer.start(15)
 
-    # --- STRESS LOGIC ---
-    def update_stress(self, stress):
-        self.stress_level = stress
-        
-        # Aktualizuj wartość paska stresu w DuckArea
-        self.duck_area.update_bar_value(stress)
-        
-        if stress < 0.2: 
-            self.change_state("zen")
-            self.toggle_expand(False)
-            self.has_triggered_intro = False
-        elif stress < 0.5: 
-            self.change_state("focus")
-            self.toggle_expand(False)
-            self.has_triggered_intro = False
-        elif stress < 0.8: 
-            self.change_state("worry")
-            self.toggle_expand(False)
-            self.has_triggered_intro = False
-        else: 
-            self.change_state("stoic")
-            self.toggle_expand(True)
-            
-            if not self.has_triggered_intro:
-                self.has_triggered_intro = True
-                self.handle_user_message("SYSTEM_TRIGGER: HIGH_STRESS")
-
-    def change_state(self, state_name):
-        if state_name == self.current_state_name: return
-        
-        data = DUCK_STATES[state_name]
-        new_color = data["color"]
-        
-        self.shell.setBorderColor(new_color)
-        
-        # Aktualizuj kolor paska stresu
-        self.duck_area.update_bar_color(new_color)
-        
-        if not self.is_speaking:
-            self.glow.setColor(QColor(new_color))
-        
-        self._load_gif(state_name)
-        self.current_state_name = state_name
-
-    def _load_gif(self, state_name):
-        path = DUCK_STATES[state_name]["path"]
-        if not os.path.exists(path): return
-        
-        if self.movie: self.movie.stop()
-        self.movie = QMovie(path)
-        
-        # Skalowanie GIFa (z uwzględnieniem paska na dole)
-        # Odejmujemy więcej z wysokości, żeby zrobić miejsce na bar
-        s_w = WIDTH - (MARGIN * 2)
-        s_h = WIDTH - (MARGIN * 2) 
-        self.movie.setScaledSize(QSize(s_w, s_h))
-        
-        self.duck_area.label.setMovie(self.movie)
-        self.movie.start()
-
-    # --- MOUSE EVENTS ---
+    # --- DRAG & DROP ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.dragPos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+            self.drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
-
-    def mouseReleaseEvent(self, event):
-        self.dragPos = None
-        self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
-        event.accept()
-
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton and self.dragPos:
-            self.move(event.globalPosition().toPoint() - self.dragPos)
+        if event.buttons() == Qt.MouseButton.LeftButton and self.drag_pos:
+            self.move(event.globalPosition().toPoint() - self.drag_pos)
             event.accept()
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background: white; border: 1px solid #ddd; padding: 5px; color: black; }")
-        quit_act = QAction("Zamknij", self)
-        quit_act.triggered.connect(QApplication.quit)
-        menu.addAction(quit_act)
+        menu.setStyleSheet("QMenu { background: white; border: 1px solid #E5E7EB; padding: 5px; color: #374151; }")
+        ac = QAction("Zamknij", self)
+        ac.triggered.connect(QApplication.quit)
+        menu.addAction(ac)
         menu.exec(event.globalPosition().toPoint())
 
-# --- SIMULATION ---
-def check_hotkeys(widget):
+# --- ENTRY POINT ---
+def dev_hotkeys(app):
     try:
-        if keyboard.is_pressed('1'): widget.update_stress(0.1)
-        elif keyboard.is_pressed('2'): widget.update_stress(0.4)
-        elif keyboard.is_pressed('3'): widget.update_stress(0.7)
-        elif keyboard.is_pressed('4'): widget.update_stress(0.95)
+        if keyboard.is_pressed('1'): app.update_stress(0.1)
+        elif keyboard.is_pressed('2'): app.update_stress(0.4)
+        elif keyboard.is_pressed('3'): app.update_stress(0.7)
+        elif keyboard.is_pressed('4'): app.update_stress(0.95)
         elif keyboard.is_pressed('q'): QApplication.quit()
     except: pass
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    widget = StoicDuckWidget()
-    widget.show()
     
-    t = QTimer()
-    t.timeout.connect(lambda: check_hotkeys(widget))
-    t.start(100)
+    # Load Modern Font
+    font = QFont("Segoe UI", 10)
+    app.setFont(font)
+
+    window = StoicDuckPro()
+    window.show()
+    
+    timer = QTimer()
+    timer.timeout.connect(lambda: dev_hotkeys(window))
+    timer.start(100)
     
     sys.exit(app.exec())
