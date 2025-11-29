@@ -11,7 +11,8 @@ from typing import Tuple
 # PyQt Imports
 from PyQt6.QtWidgets import (
     QApplication, QLabel, QWidget, QVBoxLayout, QFrame,
-    QTextEdit, QPushButton, QHBoxLayout, QProgressBar
+    QGraphicsDropShadowEffect, QTextEdit, QPushButton,
+    QHBoxLayout, QProgressBar
 )
 from PyQt6.QtCore import (
     Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, 
@@ -53,12 +54,12 @@ class AppConfig:
     GRADIENT_WORRY: Tuple[str, str] = ("#FF8008", "#FFC837")  
     GRADIENT_STOIC: Tuple[str, str] = ("#F2994A", "#F2C94C")  
     
-    # Kolory pojedyncze (pomocnicze)
-    COLOR_STOIC: str = "#F2994A" # Złoty kolor dla tekstu Mentora
+    # Kolory pojedyncze
+    COLOR_STOIC: str = "#F2994A"
 
     # AI Settings
-    AI_THINK_MIN_SEC: float = 0.5
-    AI_THINK_MAX_SEC: float = 1.5
+    AI_THINK_MIN_SEC: float = 1.0  # Trochę dłużej, żeby widać było blokadę
+    AI_THINK_MAX_SEC: float = 2.5
 
 class DuckState(Enum):
     ZEN = "zen"
@@ -100,7 +101,7 @@ class StyleSheetManager:
                 color: {AppConfig.TEXT_PRIMARY};
                 font-family: 'Segoe UI', sans-serif;
                 font-size: 11px;
-                line-height: 1.4;
+                line-height: 1.3;
                 border: none;
             }}
             QScrollBar:vertical {{
@@ -122,28 +123,30 @@ class StyleSheetManager:
 
     @staticmethod
     def get_input_style() -> str:
-        # FIX: Dodano ukrywanie scrollbarów
         return f"""
             QTextEdit {{
                 background-color: {AppConfig.INPUT_BG};
-                border: 1px solid #E0E6ED;
+                border: 1px solid transparent;
                 border-radius: 20px;
                 color: {AppConfig.TEXT_PRIMARY};
-                padding: 8px 12px;
-                font-family: 'Segoe UI';
+                padding: 10px 15px;
+                font-family: 'Segoe UI', sans-serif;
                 font-size: 12px;
-                qproperty-alignment: AlignVCenter; /* Wyśrodkowanie w pionie */
             }}
             QTextEdit:focus {{
-                border: 1px solid #74B9FF;
                 background-color: #FFFFFF;
+                border: 1px solid #D1D5DB;
             }}
-            /* Ukrywamy oba suwaki */
+            /* Styl dla stanu zablokowanego (gdy AI myśli) */
+            QTextEdit:disabled {{
+                background-color: #EEEEEE;
+                color: #AAAAAA;
+            }}
+            
+            /* Ukrycie scrollbarów w polu input */
             QScrollBar:vertical, QScrollBar:horizontal {{
-                height: 0px;
                 width: 0px;
-                border: none;
-                background: transparent;
+                height: 0px;
             }}
         """
 
@@ -162,6 +165,10 @@ class StyleSheetManager:
             }}
             QPushButton:hover {{
                 margin-top: 1px;
+            }}
+            QPushButton:disabled {{
+                background-color: #CCCCCC; /* Szary, gdy zablokowany */
+                color: #888888;
             }}
         """
 
@@ -360,6 +367,20 @@ class ChatArea(QWidget):
         self.history.setStyleSheet(StyleSheetManager.get_chat_style(colors[1]))
         self.btn.setStyleSheet(StyleSheetManager.get_send_btn_style(colors[0], colors[1]))
 
+    def set_locked(self, locked: bool):
+        """Blokuje input i przycisk, zmienia placeholder."""
+        self.input.setReadOnly(locked)
+        self.input.setEnabled(not locked) # Wyszarzenie
+        self.btn.setEnabled(not locked)
+        
+        if locked:
+            self.input.setPlaceholderText("Mentor myśli...")
+            self.btn.setCursor(Qt.CursorShape.ForbiddenCursor)
+        else:
+            self.input.setPlaceholderText("Wpisz myśl...")
+            self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.input.setFocus()
+
     def _on_key(self, event):
         if event.key() == Qt.Key.Key_Return and event.modifiers() == Qt.KeyboardModifier.NoModifier:
             self._send()
@@ -405,8 +426,8 @@ class ChatArea(QWidget):
             
             <div style="
                 color: {AppConfig.TEXT_PRIMARY}; 
-                font-size: 12px; 
-                line-height: 1.4; 
+                font-size: 11px; 
+                line-height: 1.3; 
                 text-align: left;">
                 {text}
             </div>
@@ -466,9 +487,6 @@ class StoicDuckPro(QWidget):
         self.chat_area.message_sent.connect(self._handle_user_message)
         self.inner_layout.addWidget(self.chat_area)
 
-        # Cień usunięty (aby uniknąć błędów graficznych)
-        # self.glow = QGraphicsDropShadowEffect() ...
-
     def update_stress(self, stress: float):
         self.stress_level = max(0.0, min(1.0, stress))
         self.duck_area.set_stress_value(self.stress_level)
@@ -505,6 +523,9 @@ class StoicDuckPro(QWidget):
         self.duck_area.load_gif(filename)
 
     def _handle_user_message(self, text: str):
+        # BLOKADA INTERFEJSU
+        self.chat_area.set_locked(True)
+        
         self.worker = AIWorker(text, self.stress_level)
         self.worker.response_ready.connect(self._on_ai_response)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -512,6 +533,8 @@ class StoicDuckPro(QWidget):
 
     def _on_ai_response(self, text: str, duration: float):
         self.chat_area.add_response(text)
+        # ODBLOKOWANIE INTERFEJSU
+        self.chat_area.set_locked(False)
         self._voice_effect(duration)
 
     def _voice_effect(self, duration):
