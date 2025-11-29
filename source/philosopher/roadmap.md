@@ -12,12 +12,12 @@
     - [x] Verify in the console that the duck responds stoically and briefly.
 
 ## Phase 3: The Philosopher's Voice
-- [ ] **ElevenLabs Integration:**
-    - [ ] Get API key from ElevenLabs (Free Tier).
-    - [ ] Select a voice (e.g., "Marcus" or another Deep Narrative voice).
-    - [ ] Write a function to convert text from Gemini into an `.mp3` file.
-- [ ] **Audio Player:**
-    - [ ] Implement `.mp3` playback using `pygame` (without blocking the program).
+- [x] **ElevenLabs Integration:**
+    - [x] Get API key from ElevenLabs (Free Tier).
+    - [x] Select a voice (e.g., "Marcus" or another Deep Narrative voice).
+    - [x] Write a function to convert text from Gemini into an `.mp3` file.
+- [x] **Audio Player:**
+    - [x] Implement `.mp3` playback using `pygame` (without blocking the program).
 
 ## Phase 4: Optimization & Integration
 - [ ] **Optimize API request**

@@ -13,3 +13,4 @@ Example: "The bug is external. Your anger is internal. 'git reset' your emotions
 
 YOU SHOULD USE SOKRATES WAY OF TALKING
 """
+STOIC_VOICE_ID: Final[str] = "pqHfZKP75CvOlQylNhV4"  # using Bill bc he is a cool guy

@@ -9,7 +9,7 @@ load_result = load_dotenv()
 
 
 class GeminiBrain:
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initialize connection with z Google Gemini.
         """
@@ -23,7 +23,7 @@ class GeminiBrain:
             model_name=MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION
         )
 
-    def generate_stoic_advice(self, user_context="I am stressed about my job."):
+    def generate_stoic_advice(self, user_context="I am stressed about my job.") -> str:
         """
         Sends a question to the Gemini model and returns a response.
 
@@ -49,4 +49,4 @@ if __name__ == "__main__":
     Use `.\.venv\Scripts\python.exe -m source.philosopher.gemini_brain` to run the script below.
     """
     brain: GeminiBrain = GeminiBrain()
-    print(brain.generate_stoic_advice("My code keeps segfaulting!"))
+    print(brain.generate_stoic_advice("My code keeps faulting!"))
