@@ -43,12 +43,14 @@ class VoiceEngine:
             with open(temp_file, "wb") as f:
                 for chunk in audio_generator:
                     f.write(chunk)
-            self._play_file(temp_file)
-
+            self.play_file(temp_file)
         except Exception as e:
             print(f"Error connected to ElevenLabs: {e}")
+        finally:
+            pygame.mixer.music.unload()
+            os.remove(temp_file)
 
-    def _play_file(self, file_path):
+    def play_file(self, file_path):
         """
         Plays out the audio.
 

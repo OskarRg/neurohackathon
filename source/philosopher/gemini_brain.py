@@ -3,7 +3,10 @@ import google.generativeai as genai
 from google.generativeai.types.generation_types import GenerateContentResponse
 from dotenv import load_dotenv
 
-from source.philosopher.utils import MODEL_NAME, SYSTEM_INSTRUCTION
+from source.philosopher.utils import (
+    MODEL_NAME,
+    TEST_SYSTEM_INSTRUCTION,
+)
 
 load_result = load_dotenv()
 
@@ -20,8 +23,9 @@ class GeminiBrain:
         genai.configure(api_key=api_key)
 
         self.model: genai.GenerativeModel = genai.GenerativeModel(
-            model_name=MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION
+            model_name=MODEL_NAME, system_instruction=TEST_SYSTEM_INSTRUCTION
         )
+        self.chat = self.model.start_chat(history=[])
 
     def generate_stoic_advice(self, user_context="I am stressed about my job.") -> str:
         """
@@ -30,9 +34,7 @@ class GeminiBrain:
         :param user_context: Text input from the user.
         """
         try:
-            response: GenerateContentResponse = self.model.generate_content(
-                user_context
-            )
+            response: GenerateContentResponse = self.chat.send_message(user_context)
             raw_text: str = response.text.strip()
             clean_text: str = (
                 raw_text.replace("*", "").replace("`", "").replace("_", "")
