@@ -4,6 +4,7 @@ from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 
 from config import CONVERSATION_STARTER, AppStateDict
 from source.duck_widget.duck_widget import StoicDuckPro, dev_hotkeys
+from source.neuro_reader.eeg_service import EEGService
 from source.neuro_reader.utils import EEGDataDict
 from source.neuro_reader.mock_service import MockEEGService
 from source.philosopher.philosopher_ai import PhilosopherAI
@@ -19,8 +20,8 @@ def main():
 
     duck_window: StoicDuckPro = StoicDuckPro()
 
-    # eeg_service = EEGService()  commented for testing
-    eeg_service: MockEEGService = MockEEGService()
+    eeg_service = EEGService()
+    # eeg_service: MockEEGService = MockEEGService()  #  used for testing
     eeg_service.start()
 
     philosopher: PhilosopherAI = PhilosopherAI()
@@ -146,7 +147,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # TODO When the duck is speaking on
-    #  the first prompt it is possible to
-    #  still send a prompt that should be fixed
     sys.exit(main())
