@@ -1,10 +1,29 @@
 import sys
 import os
 import logging
+import time
 import keyboard
 from dataclasses import dataclass
 from enum import Enum
 from typing import Tuple
+import threading
+
+# optional recording backend
+try:
+    import sounddevice as sd
+    import soundfile as sf
+
+    _REC_AVAILABLE = True
+except Exception:
+    sd = None
+    sf = None
+    _REC_AVAILABLE = False
+
+# winsound fallback for playback on Windows
+try:
+    import winsound
+except Exception:
+    winsound = None
 
 # PyQt Imports
 from PyQt6.QtWidgets import (
@@ -25,6 +44,7 @@ from PyQt6.QtCore import (
     QSize,
     QRectF,
     pyqtSignal,
+    QEvent,
 )
 from PyQt6.QtGui import (
     QMovie,
@@ -173,21 +193,52 @@ class StyleSheetManager:
     def get_send_btn_style(color1: str, color2: str) -> str:
         return f"""
             QPushButton {{
-                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, 
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
                                                   stop:0 {color1}, stop:1 {color2});
                 color: white;
                 border-radius: 20px;
                 font-weight: bold;
                 border: none;
                 font-size: 16px;
-                padding-bottom: 3px;
+                padding: 0 12px;
+                height: 40px;
+                outline: none;
             }}
             QPushButton:hover {{
-                margin-top: 1px;
+                /* zachowaj zaokrąglony kształt na hover */
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
+                                                  stop:0 {color1}, stop:1 {color2});
+                border-radius: 20px;
+                margin: 0;
+            }}
+            QPushButton:pressed {{
+                /* delikatny efekt "wciśnięcia" bez zmiany kształtu */
+                padding-top: 2px;
             }}
             QPushButton:disabled {{
-                background-color: #CCCCCC; /* Szary, gdy zablokowany */
+                background-color: #CCCCCC;
                 color: #888888;
+            }}
+        """
+
+    @staticmethod
+    def get_record_btn_style(color1: str, color2: str) -> str:
+        # Styl dla przycisku nagrywania (neutralny / przygotowany pod przyszłe aktywności)
+        return f"""
+            QPushButton {{
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, 
+                                                  stop:0 #FFFFFF, stop:1 #F3F4F6);
+                color: {AppConfig.TEXT_PRIMARY};
+                border-radius: 20px;
+                border: 1px solid #E2E8F0;
+                font-size: 16px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid {color2};
+            }}
+            QPushButton:disabled {{
+                background-color: #F7F7F7;
+                color: #BBBBBB;
             }}
         """
 
@@ -314,12 +365,17 @@ class DuckArea(QWidget):
 
 class ChatArea(QWidget):
     message_sent = pyqtSignal(str)
+    mic_requested = pyqtSignal(str)
+    recording_finished_signal = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(AppConfig.CHAT_HEIGHT)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 0, 20, 25)
+        self._last_recording = None
+        self._is_playing = False
+        self.recording_finished_signal.connect(self._on_recording_finished)
 
         # Divider
         line = QFrame()
@@ -328,7 +384,7 @@ class ChatArea(QWidget):
         layout.addWidget(line)
 
         # Header
-        header = QLabel("MENTOR STOICKI")
+        header = QLabel("STOIC MENTOR")
         header.setStyleSheet(
             f"color: {AppConfig.TEXT_SECONDARY}; font-weight: 700; font-family: 'Segoe UI'; margin-top: 15px; font-size: 10px; letter-spacing: 2px;"
         )
@@ -354,7 +410,7 @@ class ChatArea(QWidget):
         self.input.setStyleSheet(StyleSheetManager.get_input_style())
         self.input.keyPressEvent = self._on_key
 
-        # Button
+        # Send Button
         self.btn = QPushButton("➤")
         self.btn.setFixedSize(40, 40)
         self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -365,7 +421,33 @@ class ChatArea(QWidget):
         )
         self.btn.clicked.connect(self._send)
 
+        # Record Button (placeholder for future voice recording -> transcription)
+        self.record_btn = QPushButton("🎤")
+        self.record_btn.setFixedSize(40, 40)
+        self.record_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.record_btn.setToolTip("Record voice (future)")
+        self.record_btn.setStyleSheet(
+            StyleSheetManager.get_record_btn_style(
+                AppConfig.GRADIENT_ZEN[0], AppConfig.GRADIENT_ZEN[1]
+            )
+        )
+
+        # Recording state
+        self._is_recording = False
+        self._record_thread = None
+        self._stop_recording = threading.Event()
+        self._rec_available = _REC_AVAILABLE
+        if not self._rec_available:
+            # disable if backend missing
+            self.record_btn.setEnabled(False)
+            self.record_btn.setToolTip(
+                "Recording requires 'sounddevice' and 'soundfile' packages"
+            )
+
+        self.record_btn.clicked.connect(self._toggle_recording)
+
         input_box.addWidget(self.input)
+        input_box.addWidget(self.record_btn)  # <-- now next to input and before send
         input_box.addWidget(self.btn)
         layout.addLayout(input_box)
 
@@ -374,19 +456,30 @@ class ChatArea(QWidget):
         self.btn.setStyleSheet(
             StyleSheetManager.get_send_btn_style(colors[0], colors[1])
         )
+        # update record button style if present
+        if hasattr(self, "record_btn"):
+            self.record_btn.setStyleSheet(
+                StyleSheetManager.get_record_btn_style(colors[0], colors[1])
+            )
 
     def set_locked(self, locked: bool):
         """Blocks input and button, changes placeholder."""
         self.input.setReadOnly(locked)
         self.input.setEnabled(not locked)  # Wyszarzenie
         self.btn.setEnabled(not locked)
+        if hasattr(self, "record_btn"):
+            self.record_btn.setEnabled(not locked)
 
         if locked:
             self.input.setPlaceholderText("Mentor is thinking...")
             self.btn.setCursor(Qt.CursorShape.ForbiddenCursor)
+            if hasattr(self, "record_btn"):
+                self.record_btn.setCursor(Qt.CursorShape.ForbiddenCursor)
         else:
             self.input.setPlaceholderText("What doubts you...")
             self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            if hasattr(self, "record_btn"):
+                self.record_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.input.setFocus()
 
     def _on_key(self, event):
@@ -403,17 +496,111 @@ class ChatArea(QWidget):
         text = self.input.toPlainText().strip()
         if not text:
             return
-        self._append_message("YOU", text, is_user=True)
+        self._append_message(text, is_user=True)
         self.input.clear()
         self.message_sent.emit(text)
 
-    def add_response(self, text):
-        self._append_message("MENTOR", text, is_user=False)
+    # New toggle handler: start/stop recording and emit mic_requested when done
+    def _toggle_recording(self):
+        if not self._rec_available:
+            self._append_message("Recording backend not available.", is_user=False)
+            return
 
-    def _append_message(self, sender: str, text: str, is_user: bool):
+        if self._is_recording:
+            self._stop_recording.set()
+            QTimer.singleShot(0, lambda: self.record_btn.setText("🎤"))
+            return
+
+        # start recording
+        self._stop_recording.clear()
+        self._is_recording = True
+        QTimer.singleShot(0, lambda: self.record_btn.setText("⏹"))
+
+        self._record_thread = threading.Thread(target=self._record_worker, daemon=True)
+        self._record_thread.start()
+
+    def _on_recording_finished(self, filename: str):
+        """
+        Function will run in the main thread using Signal.
+
+        :param filename: Filename to the recording.
+        """
+        self._is_recording = False
+        self.record_btn.setText("🎤")
+        self._last_recording = filename
+        self.mic_requested.emit(str(filename))
+
+    def _record_worker(self):
+        """
+        Records audio to a WAV file saved under the project folder ~/neurohackathon/assets.
+        Emits mic_requested(filename) when finished.
+        """
+        try:
+            samplerate = 16000
+            channels = 1
+
+            # ensure recordings directory inside project root (two levels up from this file)
+            project_root = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..")
+            )
+            rec_dir = os.path.join(project_root, "assets")
+            os.makedirs(rec_dir, exist_ok=True)
+
+            filename = os.path.join(rec_dir, "voice_recording.wav")
+
+            # Use soundfile to write chunks from sounddevice InputStream
+            with sf.SoundFile(
+                filename,
+                mode="w",
+                samplerate=samplerate,
+                channels=channels,
+                subtype="PCM_16",
+            ) as file:
+
+                def callback(indata, frames, timeinfo, status):
+                    if status:
+                        # write status to console but continue
+                        print(f"Recording status: {status}")
+                    file.write(indata)
+
+                with sd.InputStream(
+                    samplerate=samplerate, channels=channels, callback=callback
+                ):
+                    # keep recording until stop requested
+                    while not self._stop_recording.is_set():
+                        time.sleep(0.1)
+
+            # finalize state on main thread
+            def finish():
+                self._is_recording = False
+                self.record_btn.setText("🎤")
+                # save last recording path and enable play button
+                self._last_recording = filename
+                self.play_btn.setVisible(True)
+                # emit filename to listeners
+                QTimer.singleShot(0, lambda: self.mic_requested.emit(filename))
+
+            self.recording_finished_signal.emit(filename)
+        except Exception as e:
+            print(f"Recording error: {e}")
+
+            def on_error():
+                self._is_recording = False
+                self.record_btn.setText("🎤")
+                self._append_message("Recording failed.", is_user=False)
+
+            QTimer.singleShot(0, on_error)
+
+    def add_response(self, text):
+        self._append_message(text, is_user=False)
+
+    def add_user_response(self, text):
+        self._append_message(text, is_user=True)
+
+    def _append_message(self, text: str, is_user: bool):
         if is_user:
             label_color = "#999999"
-            label_text = "TY"
+            label_text = "YOU"
         else:
             label_color = AppConfig.COLOR_STOIC
             label_text = "MENTOR"
@@ -503,6 +690,57 @@ class StoicDuckPro(QWidget):
         self.chat_area.setFixedHeight(0)
         self.chat_area.hide()
         self.inner_layout.addWidget(self.chat_area)
+
+        # Install event filters on main widgets so context menu is handled
+        # regardless of which child widget was clicked.
+        for w in (
+            self,
+            self.shell,
+            self.duck_area,
+            getattr(self.duck_area, "label", None),
+            self.chat_area,
+            getattr(self.chat_area, "history", None),
+            getattr(self.chat_area, "input", None),
+            getattr(self.chat_area, "btn", None),
+            getattr(self.chat_area, "record_btn", None),
+        ):
+            if w is not None:
+                w.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        # Catch right-click mouse press (earlier than ContextMenu) and ContextMenu events
+        # so our custom menu is shown for the whole widget instead of child default menus.
+        if event.type() == QEvent.Type.MouseButtonPress:
+            try:
+                if event.button() == Qt.MouseButton.RightButton:
+                    try:
+                        gp = event.globalPosition().toPoint()
+                    except Exception:
+                        gp = event.globalPos()
+                    self._show_context_menu(gp)
+                    return True
+            except Exception:
+                pass
+
+        if event.type() == QEvent.Type.ContextMenu:
+            try:
+                gp = event.globalPosition().toPoint()
+            except Exception:
+                gp = event.globalPos()
+            self._show_context_menu(gp)
+            return True
+
+        return super().eventFilter(obj, event)
+
+    def _show_context_menu(self, gp):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: white; border: 1px solid #ddd; padding: 5px; color: black; }"
+        )
+        ac = QAction("Close", self)
+        ac.triggered.connect(QApplication.quit)
+        menu.addAction(ac)
+        menu.exec(gp)
 
     def update_stress(self, stress: float):
         self.stress_level = max(0.0, min(1.0, stress))
@@ -615,7 +853,12 @@ class StoicDuckPro(QWidget):
         ac = QAction("Close", self)
         ac.triggered.connect(QApplication.quit)
         menu.addAction(ac)
-        menu.exec(event.globalPosition().toPoint())
+        # QContextMenuEvent may provide globalPos() (QPoint) instead of globalPosition()
+        try:
+            gp = event.globalPosition().toPoint()
+        except Exception:
+            gp = event.globalPos()
+        menu.exec(gp)
 
 
 # --- ENTRY POINT ---

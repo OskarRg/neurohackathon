@@ -3,15 +3,15 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 
 from config import CONVERSATION_STARTER, AppStateDict
-from source.duck_widget.duck_widget import StoicDuckPro
+from source.duck_widget.duck_widget import StoicDuckPro, dev_hotkeys
 from source.neuro_reader.utils import EEGDataDict
-from source.neuro_reader.eeg_service import EEGService
 from source.neuro_reader.mock_service import MockEEGService
 from source.philosopher.philosopher_ai import PhilosopherAI
 
 
 class Bridge(QObject):
     ai_response_ready = pyqtSignal(str)
+    user_speech_ready = pyqtSignal(str)
 
 
 def main():
@@ -75,6 +75,32 @@ def main():
 
     duck_window.chat_area.message_sent.connect(handle_user_input_from_gui)
 
+    def show_user_speech_bubble(text):
+        print(f"[GUI] Speech: {text}")
+        duck_window.chat_area.add_user_response(f"{text}")
+
+    bridge.user_speech_ready.connect(show_user_speech_bubble)
+
+    def handle_recorded_audio(file_path: str):
+        print(f"Got audio file from GUI: {file_path}")
+
+        duck_window.chat_area.set_locked(True)
+
+        def on_ai_voice_finish(text):
+            bridge.ai_response_ready.emit(text)
+            if app_state["conversation_locked"]:
+                app_state["conversation_locked"] = False
+
+        print("Starting the philosopher...")
+        philosopher.process_wav_and_trigger(
+            file_path=file_path,
+            on_user_text_callback=lambda txt: bridge.user_speech_ready.emit(txt),
+            on_ai_response_callback=on_ai_voice_finish,
+        )
+        print("finished this")
+
+    duck_window.chat_area.mic_requested.connect(handle_recorded_audio)
+
     def polling_loop():
         data: EEGDataDict = eeg_service.get_data()
 
@@ -85,7 +111,7 @@ def main():
 
         if app_state["conversation_locked"] or philosopher.is_speaking:
             stress_to_show_in_gui = max(normalized_stress, 0.95)
-
+        dev_hotkeys(duck_window)
         duck_window.update_stress(stress_to_show_in_gui)
 
         if app_state["conversation_locked"]:
@@ -112,7 +138,6 @@ def main():
     timer.start(200)
 
     duck_window.show()
-    print("Application is running.")
 
     exit_code: int = app.exec()
 
