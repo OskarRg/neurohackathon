@@ -3,6 +3,7 @@ import threading
 import time
 from typing import Callable
 import pygame
+import speech_recognition as sr
 from source.philosopher.gemini_brain import GeminiBrain
 from source.philosopher.utils import CONVERSATION_STARTER_PATH, GONG_SOUND_PATH
 from source.philosopher.voice_engine import VoiceEngine
@@ -120,3 +121,67 @@ class PhilosopherAI:
 
         thread = threading.Thread(target=_speak_thread)
         thread.start()
+
+    def process_wav_and_trigger(
+        self, file_path: str, on_user_text_callback=None, on_ai_response_callback=None
+    ):
+        """
+        1. Records user.
+        2. Speech to text conversion (Google STT).
+        3. Send text to GUI do GUI.
+        4. Send text to Gemini -> ElevenLabs -> GUI .
+
+        :param file_path: Path to the voice recording.
+        :param on_user_text_callback: Function to pass text feedback.
+        :param on_ai_response_callback: Function to pass voice feedback.
+        """
+        if self.is_speaking:
+            print("Mentor is speaking, pay attention now.")
+            return
+
+        self.is_speaking = True
+
+        def _listen_thread():
+            recognizer: sr.Recognizer = sr.Recognizer()
+
+            try:
+                with sr.AudioFile(file_path) as source:
+                    audio_data = recognizer.record(source)
+
+                # language='pl-PL' for polish, 'en-US' for english
+                user_text: str = recognizer.recognize_google(
+                    audio_data, language="en-us"
+                )
+                if on_user_text_callback:
+                    try:
+                        on_user_text_callback(user_text)
+                    except Exception as e:
+                        print(f"User callback error: {e}")
+
+                ai_advice: str = self.brain.generate_stoic_advice(
+                    user_context=user_text
+                )
+                print(f"AI advice: {ai_advice}")
+
+                if on_ai_response_callback:
+                    try:
+                        on_ai_response_callback(ai_advice)
+                    except Exception as e:
+                        print(f"Błąd callbacka AI: {e}")
+
+                self.voice.speak(ai_advice)
+                time.sleep(3.0)
+
+            except sr.WaitTimeoutError:
+                print("Timeout: Could hear you.")
+            except sr.UnknownValueError:
+                print("Could not understand you.")
+            except sr.RequestError as e:
+                print(f"No connection to Google API: {e}")
+            except Exception as e:
+                print(f"Critical mic audio error: {e}")
+            finally:
+                self.is_speaking = False
+                print("End listening.")
+
+        threading.Thread(target=_listen_thread).start()

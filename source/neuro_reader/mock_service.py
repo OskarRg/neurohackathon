@@ -25,7 +25,7 @@ class MockEEGService:
         elif elapsed < 5:
             base_stress = 1.0
             mood = "FOCUS"
-        elif elapsed > 10:
+        elif elapsed > 50:
             base_stress = 0.2
             mood = "RELAX"
         else:

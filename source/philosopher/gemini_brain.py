@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 from source.philosopher.utils import (
     MODEL_NAME,
-    TEST_SYSTEM_INSTRUCTION,
+    SYSTEM_INSTRUCTION,
 )
 
 load_result = load_dotenv()
@@ -23,7 +23,7 @@ class GeminiBrain:
         genai.configure(api_key=api_key)
 
         self.model: genai.GenerativeModel = genai.GenerativeModel(
-            model_name=MODEL_NAME, system_instruction=TEST_SYSTEM_INSTRUCTION
+            model_name=MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION
         )
         self.chat = self.model.start_chat(history=[])
 
