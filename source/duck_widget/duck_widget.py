@@ -19,6 +19,12 @@ except Exception:
     sf = None
     _REC_AVAILABLE = False
 
+# winsound fallback for playback on Windows
+try:
+    import winsound
+except Exception:
+    winsound = None
+
 # PyQt Imports
 from PyQt6.QtWidgets import (
     QApplication,
@@ -359,13 +365,15 @@ class DuckArea(QWidget):
 
 class ChatArea(QWidget):
     message_sent = pyqtSignal(str)
-    mic_requested = pyqtSignal()  # NEW: emitted when a mic recording cycle finishes
+    mic_requested = pyqtSignal(str)  # emits saved WAV filepath after recording finishes
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(AppConfig.CHAT_HEIGHT)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 0, 20, 25)
+        self._last_recording = None
+        self._is_playing = False
 
         # Divider
         line = QFrame()
@@ -411,6 +419,14 @@ class ChatArea(QWidget):
         )
         self.btn.clicked.connect(self._send)
 
+        # Play last recording button (hidden until we have one)
+        self.play_btn = QPushButton("▶")
+        self.play_btn.setFixedSize(40, 40)
+        self.play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_btn.setToolTip("Play last recording")
+        self.play_btn.setVisible(False)
+        self.play_btn.clicked.connect(self._play_last_recording)
+
         # Record Button (placeholder for future voice recording -> transcription)
         self.record_btn = QPushButton("🎤")
         self.record_btn.setFixedSize(40, 40)
@@ -435,6 +451,7 @@ class ChatArea(QWidget):
         self.record_btn.clicked.connect(self._toggle_recording)
 
         input_box.addWidget(self.input)
+        input_box.addWidget(self.play_btn)
         input_box.addWidget(self.record_btn)  # <-- now next to input and before send
         input_box.addWidget(self.btn)
         layout.addLayout(input_box)
@@ -515,15 +532,19 @@ class ChatArea(QWidget):
 
     def _record_worker(self):
         """
-        Records audio to a temporary WAV file until _stop_recording is set.
-        Emits mic_requested() when finished.
+        Records audio to a WAV file saved under the project folder ~/neurohackathon/recordings.
+        Emits mic_requested(filename) when finished.
         """
         try:
             samplerate = 16000
             channels = 1
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-            filename = tmp.name
-            tmp.close()
+
+            # ensure recordings directory inside project root (two levels up from this file)
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            rec_dir = os.path.join(project_root, "recordings")
+            os.makedirs(rec_dir, exist_ok=True)
+
+            filename = os.path.join(rec_dir, f"voice_{time.strftime('%Y%m%d_%H%M%S')}.wav")
 
             # Use soundfile to write chunks from sounddevice InputStream
             with sf.SoundFile(filename, mode="w", samplerate=samplerate, channels=channels, subtype="PCM_16") as file:
@@ -542,10 +563,13 @@ class ChatArea(QWidget):
             def finish():
                 self._is_recording = False
                 self.record_btn.setText("🎤")
-                # notify listeners that mic file is ready (signal without args as requested)
-                self.mic_requested.emit()
-                # show small system note in history
-                self._append_message("SYSTEM", f"Recorded audio saved to: {filename}", is_user=False)
+                # save last recording path and enable play button
+                self._last_recording = filename
+                self.play_btn.setVisible(True)
+                # emit filename to listeners
+                QTimer.singleShot(0, lambda: self.mic_requested.emit(filename))
+                # show small system note in history with path
+                self._append_message("SYSTEM", f"Voice message recorded: {filename}", is_user=False)
 
             QTimer.singleShot(0, finish)
 
@@ -556,6 +580,36 @@ class ChatArea(QWidget):
                 self.record_btn.setText("🎤")
                 self._append_message("SYSTEM", "Recording failed.", is_user=False)
             QTimer.singleShot(0, on_error)
+
+    def _play_last_recording(self):
+        """Play the last recorded WAV (uses sounddevice if available, winsound fallback)."""
+        if not self._last_recording or not os.path.exists(self._last_recording):
+            self._append_message("SYSTEM", "No recording available to play.", is_user=False)
+            return
+
+        if self._is_playing:
+            self._append_message("SYSTEM", "Already playing...", is_user=False)
+            return
+
+        def _player():
+            try:
+                self._is_playing = True
+                QTimer.singleShot(0, lambda: self._append_message("SYSTEM", "Playback started...", is_user=False))
+                if _REC_AVAILABLE and sd is not None and sf is not None:
+                    data, sr = sf.read(self._last_recording, dtype="float32")
+                    sd.play(data, sr)
+                    sd.wait()
+                elif winsound is not None:
+                    winsound.PlaySound(self._last_recording, winsound.SND_FILENAME)
+                else:
+                    QTimer.singleShot(0, lambda: self._append_message("SYSTEM", "No playback backend available.", is_user=False))
+                QTimer.singleShot(0, lambda: self._append_message("SYSTEM", "Playback finished.", is_user=False))
+            except Exception as e:
+                QTimer.singleShot(0, lambda: self._append_message("SYSTEM", f"Playback error: {e}", is_user=False))
+            finally:
+                self._is_playing = False
+
+        threading.Thread(target=_player, daemon=True).start()
 
     def add_response(self, text):
         self._append_message("MENTOR", text, is_user=False)
