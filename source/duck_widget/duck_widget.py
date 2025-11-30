@@ -25,6 +25,7 @@ from PyQt6.QtCore import (
     QSize,
     QRectF,
     pyqtSignal,
+    QEvent,            # <-- added
 )
 from PyQt6.QtGui import (
     QMovie,
@@ -173,21 +174,52 @@ class StyleSheetManager:
     def get_send_btn_style(color1: str, color2: str) -> str:
         return f"""
             QPushButton {{
-                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, 
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
                                                   stop:0 {color1}, stop:1 {color2});
                 color: white;
                 border-radius: 20px;
                 font-weight: bold;
                 border: none;
                 font-size: 16px;
-                padding-bottom: 3px;
+                padding: 0 12px;
+                height: 40px;
+                outline: none;
             }}
             QPushButton:hover {{
-                margin-top: 1px;
+                /* zachowaj zaokrąglony kształt na hover */
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
+                                                  stop:0 {color1}, stop:1 {color2});
+                border-radius: 20px;
+                margin: 0;
+            }}
+            QPushButton:pressed {{
+                /* delikatny efekt "wciśnięcia" bez zmiany kształtu */
+                padding-top: 2px;
             }}
             QPushButton:disabled {{
-                background-color: #CCCCCC; /* Szary, gdy zablokowany */
+                background-color: #CCCCCC;
                 color: #888888;
+            }}
+        """
+
+    @staticmethod
+    def get_record_btn_style(color1: str, color2: str) -> str:
+        # Styl dla przycisku nagrywania (neutralny / przygotowany pod przyszłe aktywności)
+        return f"""
+            QPushButton {{
+                background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, 
+                                                  stop:0 #FFFFFF, stop:1 #F3F4F6);
+                color: {AppConfig.TEXT_PRIMARY};
+                border-radius: 20px;
+                border: 1px solid #E2E8F0;
+                font-size: 16px;
+            }}
+            QPushButton:hover {{
+                border: 1px solid {color2};
+            }}
+            QPushButton:disabled {{
+                background-color: #F7F7F7;
+                color: #BBBBBB;
             }}
         """
 
@@ -354,7 +386,7 @@ class ChatArea(QWidget):
         self.input.setStyleSheet(StyleSheetManager.get_input_style())
         self.input.keyPressEvent = self._on_key
 
-        # Button
+        # Send Button
         self.btn = QPushButton("➤")
         self.btn.setFixedSize(40, 40)
         self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -365,7 +397,20 @@ class ChatArea(QWidget):
         )
         self.btn.clicked.connect(self._send)
 
+        # Record Button (placeholder for future voice recording -> transcription)
+        self.record_btn = QPushButton("🎤")
+        self.record_btn.setFixedSize(40, 40)
+        self.record_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.record_btn.setToolTip("Record voice (future)")
+        self.record_btn.setStyleSheet(
+            StyleSheetManager.get_record_btn_style(
+                AppConfig.GRADIENT_ZEN[0], AppConfig.GRADIENT_ZEN[1]
+            )
+        )
+        self.record_btn.clicked.connect(self._record_placeholder)
+
         input_box.addWidget(self.input)
+        input_box.addWidget(self.record_btn)  # <-- now next to input and before send
         input_box.addWidget(self.btn)
         layout.addLayout(input_box)
 
@@ -374,19 +419,30 @@ class ChatArea(QWidget):
         self.btn.setStyleSheet(
             StyleSheetManager.get_send_btn_style(colors[0], colors[1])
         )
+        # update record button style if present
+        if hasattr(self, "record_btn"):
+            self.record_btn.setStyleSheet(
+                StyleSheetManager.get_record_btn_style(colors[0], colors[1])
+            )
 
     def set_locked(self, locked: bool):
         """Blocks input and button, changes placeholder."""
         self.input.setReadOnly(locked)
         self.input.setEnabled(not locked)  # Wyszarzenie
         self.btn.setEnabled(not locked)
+        if hasattr(self, "record_btn"):
+            self.record_btn.setEnabled(not locked)
 
         if locked:
             self.input.setPlaceholderText("Mentor is thinking...")
             self.btn.setCursor(Qt.CursorShape.ForbiddenCursor)
+            if hasattr(self, "record_btn"):
+                self.record_btn.setCursor(Qt.CursorShape.ForbiddenCursor)
         else:
             self.input.setPlaceholderText("What doubts you...")
             self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            if hasattr(self, "record_btn"):
+                self.record_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self.input.setFocus()
 
     def _on_key(self, event):
@@ -406,6 +462,11 @@ class ChatArea(QWidget):
         self._append_message("YOU", text, is_user=True)
         self.input.clear()
         self.message_sent.emit(text)
+
+    def _record_placeholder(self):
+        # Placeholder action for future voice recording feature.
+        # Currently just appends a small notice in history.
+        self._append_message("SYSTEM", "Voice recording feature not implemented yet.", is_user=False)
 
     def add_response(self, text):
         self._append_message("MENTOR", text, is_user=False)
@@ -503,6 +564,57 @@ class StoicDuckPro(QWidget):
         self.chat_area.setFixedHeight(0)
         self.chat_area.hide()
         self.inner_layout.addWidget(self.chat_area)
+
+        # Install event filters on main widgets so context menu is handled
+        # regardless of which child widget was clicked.
+        for w in (
+            self,
+            self.shell,
+            self.duck_area,
+            getattr(self.duck_area, "label", None),
+            self.chat_area,
+            getattr(self.chat_area, "history", None),
+            getattr(self.chat_area, "input", None),
+            getattr(self.chat_area, "btn", None),
+            getattr(self.chat_area, "record_btn", None),
+        ):
+            if w is not None:
+                w.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        # Catch right-click mouse press (earlier than ContextMenu) and ContextMenu events
+        # so our custom menu is shown for the whole widget instead of child default menus.
+        if event.type() == QEvent.Type.MouseButtonPress:
+            try:
+                if event.button() == Qt.MouseButton.RightButton:
+                    try:
+                        gp = event.globalPosition().toPoint()
+                    except Exception:
+                        gp = event.globalPos()
+                    self._show_context_menu(gp)
+                    return True
+            except Exception:
+                pass
+
+        if event.type() == QEvent.Type.ContextMenu:
+            try:
+                gp = event.globalPosition().toPoint()
+            except Exception:
+                gp = event.globalPos()
+            self._show_context_menu(gp)
+            return True
+
+        return super().eventFilter(obj, event)
+
+    def _show_context_menu(self, gp):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: white; border: 1px solid #ddd; padding: 5px; color: black; }"
+        )
+        ac = QAction("Close", self)
+        ac.triggered.connect(QApplication.quit)
+        menu.addAction(ac)
+        menu.exec(gp)
 
     def update_stress(self, stress: float):
         self.stress_level = max(0.0, min(1.0, stress))
@@ -615,7 +727,12 @@ class StoicDuckPro(QWidget):
         ac = QAction("Close", self)
         ac.triggered.connect(QApplication.quit)
         menu.addAction(ac)
-        menu.exec(event.globalPosition().toPoint())
+        # QContextMenuEvent may provide globalPos() (QPoint) instead of globalPosition()
+        try:
+            gp = event.globalPosition().toPoint()
+        except Exception:
+            gp = event.globalPos()
+        menu.exec(gp)
 
 
 # --- ENTRY POINT ---
