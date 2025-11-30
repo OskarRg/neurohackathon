@@ -5,6 +5,19 @@ import keyboard
 from dataclasses import dataclass
 from enum import Enum
 from typing import Tuple
+import threading
+import tempfile
+import time
+
+# optional recording backend
+try:
+    import sounddevice as sd
+    import soundfile as sf
+    _REC_AVAILABLE = True
+except Exception:
+    sd = None
+    sf = None
+    _REC_AVAILABLE = False
 
 # PyQt Imports
 from PyQt6.QtWidgets import (
@@ -346,6 +359,7 @@ class DuckArea(QWidget):
 
 class ChatArea(QWidget):
     message_sent = pyqtSignal(str)
+    mic_requested = pyqtSignal()  # NEW: emitted when a mic recording cycle finishes
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -407,7 +421,18 @@ class ChatArea(QWidget):
                 AppConfig.GRADIENT_ZEN[0], AppConfig.GRADIENT_ZEN[1]
             )
         )
-        self.record_btn.clicked.connect(self._record_placeholder)
+
+        # Recording state
+        self._is_recording = False
+        self._record_thread = None
+        self._stop_recording = threading.Event()
+        self._rec_available = _REC_AVAILABLE
+        if not self._rec_available:
+            # disable if backend missing
+            self.record_btn.setEnabled(False)
+            self.record_btn.setToolTip("Recording requires 'sounddevice' and 'soundfile' packages")
+
+        self.record_btn.clicked.connect(self._toggle_recording)
 
         input_box.addWidget(self.input)
         input_box.addWidget(self.record_btn)  # <-- now next to input and before send
@@ -464,9 +489,73 @@ class ChatArea(QWidget):
         self.message_sent.emit(text)
 
     def _record_placeholder(self):
-        # Placeholder action for future voice recording feature.
-        # Currently just appends a small notice in history.
+        # Backwards-compatible placeholder for callers that still use old method.
         self._append_message("SYSTEM", "Voice recording feature not implemented yet.", is_user=False)
+
+    # New toggle handler: start/stop recording and emit mic_requested when done
+    def _toggle_recording(self):
+        if not self._rec_available:
+            self._append_message("SYSTEM", "Recording backend not available.", is_user=False)
+            return
+
+        if self._is_recording:
+            # stop recording
+            self._stop_recording.set()
+            # UI update scheduled on main thread
+            QTimer.singleShot(0, lambda: self.record_btn.setText("🎤"))
+            return
+
+        # start recording
+        self._stop_recording.clear()
+        self._is_recording = True
+        QTimer.singleShot(0, lambda: self.record_btn.setText("⏹"))
+
+        self._record_thread = threading.Thread(target=self._record_worker, daemon=True)
+        self._record_thread.start()
+
+    def _record_worker(self):
+        """
+        Records audio to a temporary WAV file until _stop_recording is set.
+        Emits mic_requested() when finished.
+        """
+        try:
+            samplerate = 16000
+            channels = 1
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+            filename = tmp.name
+            tmp.close()
+
+            # Use soundfile to write chunks from sounddevice InputStream
+            with sf.SoundFile(filename, mode="w", samplerate=samplerate, channels=channels, subtype="PCM_16") as file:
+                def callback(indata, frames, timeinfo, status):
+                    if status:
+                        # write status to console but continue
+                        print(f"Recording status: {status}")
+                    file.write(indata)
+
+                with sd.InputStream(samplerate=samplerate, channels=channels, callback=callback):
+                    # keep recording until stop requested
+                    while not self._stop_recording.is_set():
+                        time.sleep(0.1)
+
+            # finalize state on main thread
+            def finish():
+                self._is_recording = False
+                self.record_btn.setText("🎤")
+                # notify listeners that mic file is ready (signal without args as requested)
+                self.mic_requested.emit()
+                # show small system note in history
+                self._append_message("SYSTEM", f"Recorded audio saved to: {filename}", is_user=False)
+
+            QTimer.singleShot(0, finish)
+
+        except Exception as e:
+            print(f"Recording error: {e}")
+            def on_error():
+                self._is_recording = False
+                self.record_btn.setText("🎤")
+                self._append_message("SYSTEM", "Recording failed.", is_user=False)
+            QTimer.singleShot(0, on_error)
 
     def add_response(self, text):
         self._append_message("MENTOR", text, is_user=False)
